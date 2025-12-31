@@ -1,0 +1,52 @@
+.org-chart-d3 {
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  background: #f9fafb;
+  border-radius: 8px;
+}
+
+.org-chart-d3 svg {
+  width: 100% !important;
+  height: 100% !important;
+}
+
+/* Style the SVG container */
+.org-chart-d3 svg {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', sans-serif;
+}
+
+/* Customize connecting lines */
+.org-chart-d3 .link {
+  stroke: #cbd5e1;
+  stroke-width: 2px;
+  fill: none;
+}
+
+/* Remove extra spacing from cards */
+.org-chart-d3 .node-foreign-object-div {
+  overflow: visible !important;
+}
+
+.org-chart-d3 .node-foreign-object-div > div {
+  height: 100% !important;
+  display: flex;
+  align-items: center;
+}
+
+.org-chart-empty {
+  text-align: center;
+  padding: 60px 20px;
+  color: #6b7280;
+}
+
+.org-chart-empty p {
+  margin: 10px 0;
+  font-size: 1.1rem;
+}
+
+.org-chart-empty p:first-child {
+  font-size: 1.3rem;
+  font-weight: 600;
+  color: #374151;
+}
