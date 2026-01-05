@@ -13,10 +13,10 @@ RUN npm install \
     && cd backend && npm install \
     && cd ../frontend && npm install
 
-    # Build frontend (Vite)
-    WORKDIR /app/frontend
-    COPY frontend/ .
-    RUN npm run build
+# Build frontend (Vite)
+WORKDIR /app/frontend
+COPY frontend/ .
+RUN npm run build
 
 # Stage 2: runtime container
 FROM node:20-alpine AS runtime
@@ -28,9 +28,8 @@ WORKDIR /app
 RUN addgroup -S nodegroup && adduser -S nodeuser -G nodegroup
 
 # Copy backend application code and its node_modules from build stage
-COPY backend/package.json ./backend/package.json
 COPY --from=build /app/backend/node_modules ./backend/node_modules
-COPY backend/server.js ./backend/server.js
+COPY backend/ ./backend/
 
 # Copy built frontend into /public so the backend can serve it
 COPY --from=build /app/frontend/dist ./public
