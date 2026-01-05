@@ -27,7 +27,10 @@ const COMPANY_NAME = process.env.COMPANY_NAME || 'Organization';
 const DEMO_MODE = !PERSONIO_CLIENT_ID || !PERSONIO_CLIENT_SECRET;
 
 if (DEMO_MODE) {
-  console.log('[Startup] PERSONIO_CLIENT_ID or PERSONIO_CLIENT_SECRET not set. Running in DEMO_MODE with mock data.');
+  const missing = [];
+  if (!PERSONIO_CLIENT_ID) missing.push('PERSONIO_CLIENT_ID');
+  if (!PERSONIO_CLIENT_SECRET) missing.push('PERSONIO_CLIENT_SECRET');
+  console.log(`[Startup] Running in DEMO_MODE because the following variables are missing or empty: ${missing.join(', ')}`);
 } else if (!AZURE_TENANT_ID || !AZURE_CLIENT_ID) {
   console.warn(
     '[Startup] AZURE_TENANT_ID or AZURE_CLIENT_ID not set. Microsoft token validation will fail until configured.',
