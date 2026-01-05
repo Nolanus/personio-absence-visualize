@@ -17,6 +17,7 @@ build/
 backend/curl_output.txt
 backend/full_index.html
 public/
+public
 
 # Logs
 *.log

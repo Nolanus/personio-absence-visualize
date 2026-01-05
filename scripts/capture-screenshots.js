@@ -9,7 +9,7 @@ const __dirname = path.dirname(__filename);
 
 const PORT = 8081; // Use a different port to avoid conflicts
 const URL = `http://localhost:${PORT}`;
-const OUTPUT_DIR = path.join(__dirname, '..', 'docs', 'images');
+const OUTPUT_DIR = path.join(__dirname, '..', 'docs', 'images'); // Output to docs/images
 
 // Ensure output directory exists
 if (!fs.existsSync(OUTPUT_DIR)) {
@@ -27,6 +27,7 @@ async function startServer() {
             PERSONIO_CLIENT_SECRET: '',
             AUTH_ENABLED: 'false', // Disable Auth
             NODE_ENV: 'production', // Serve static files
+            ALLOWED_ORIGIN: `http://localhost:${PORT}`, // Fix CORS
         },
         cwd: path.join(__dirname, '..'), // Root of the project
     });
@@ -72,13 +73,26 @@ async function capture() {
         const page = await browser.newPage();
 
         // Set viewport size for consistent screenshots
-        await page.setViewport({ width: 1280, height: 800 });
+        await page.setViewport({ width: 1400, height: 900 });
 
         console.log(`Navigating to ${URL}...`);
         await page.goto(URL, { waitUntil: 'networkidle0' });
 
-        // Wait for Org Chart to render (look for a node/card)
-        await page.waitForSelector('.org-chart-node', { timeout: 5000 }).catch(() => console.log("Waiting for org-chart-node timed out/not found immediately"));
+        // Wait for the Org Chart to render content. 
+        try {
+            // Wait for D3 SVG
+            await page.waitForSelector('.org-chart-d3 svg', { timeout: 10000 });
+            console.log('Org chart SVG loaded.');
+
+            // Wait for text to appear (confirms data loaded)
+            await page.waitForFunction(
+                () => document.body.innerText.includes('Alice CEO'),
+                { timeout: 5000 }
+            );
+            console.log('Found mock data text.');
+        } catch (e) {
+            console.error('Failed to find org chart or mock data:', e.message);
+        }
 
         // Give it a moment for animations/layout
         await new Promise(r => setTimeout(r, 2000));
@@ -89,11 +103,6 @@ async function capture() {
 
         // Switch to Dark Mode
         console.log('Switching to Dark Mode...');
-        // Click the theme toggle button. It has a title attribute or class we can target.
-        // Based on App.jsx: title={`Switch to ${darkMode ? 'Light' : 'Dark'} Mode`}
-        // When light (default), title is "Switch to Dark Mode".
-        // Button class is "control-btn".
-
         const themeBtn = await page.$('button[title="Switch to Dark Mode"]');
         if (themeBtn) {
             await themeBtn.click();

@@ -5,6 +5,7 @@
 ### Fixed: Only One Employee Showing
 
 **Problem:**
+
 - Only a single employee was displayed in the org chart
 - Inactive employees were included in the data
 - Multiple independent organizational trees were not supported
@@ -37,11 +38,12 @@
 ✅ Multiple independent organizational hierarchies are shown side-by-side  
 ✅ Employees without supervisors appear as independent root nodes  
 ✅ Inactive employees are filtered out  
-✅ Better performance with reduced data transfer  
+✅ Better performance with reduced data transfer
 
 ### Testing:
 
 To verify the fix:
+
 1. Ensure you have multiple active employees in Personio
 2. Some employees should have supervisors, some should not
 3. Run `npm start`
