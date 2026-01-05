@@ -1,7 +1,7 @@
 # Personio Absence Visualizer
 
-![Build Status](https://github.com/${{ github.repository }}/actions/workflows/docker-publish.yml/badge.svg)
-![License](https://img.shields.io/github/license/${{ github.repository }})
+![Build Status](https://github.com/Nolanus/personio-absence-visualize/actions/workflows/docker-publish.yml/badge.svg)
+![License](https://img.shields.io/github/license/Nolanus/personio-absence-visualize)
 ![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)
 ![Built with AI](https://img.shields.io/badge/Built%20with-AI-blueviolet)
 
