@@ -3,6 +3,7 @@
 ## Employee Node Size Comparison
 
 ### Before:
+
 ```
 ┌────────────────────────────────┐
 │  ╭────╮                         │
@@ -11,12 +12,14 @@
 │          (250px wide)            │
 └────────────────────────────────┘
 ```
+
 - Large horizontal layout
 - Always shows position
 - Takes up ~250px width
 - Avatar: 60px
 
 ### After:
+
 ```
 ┌──────────┐
 │  ╭──╮    │
@@ -26,6 +29,7 @@
 │(100-120px│
 └──────────┘
 ```
+
 - Compact vertical layout
 - Only shows abbreviated name
 - Takes up ~100-120px width
@@ -33,6 +37,7 @@
 - **60% smaller!**
 
 ### Hover State:
+
 ```
 ┌──────────┐
 │  ╭──╮    │
@@ -48,6 +53,7 @@
 │  Status: Available      │
 └─────────────────────────┘
 ```
+
 - Tooltip appears on hover
 - Shows full information
 - Dark background for contrast
@@ -56,6 +62,7 @@
 ## Layout Changes
 
 ### Before: Wrapped Layout
+
 ```
 ┌────────────────────────────────────────┐
 │  Tree 1      Tree 2      Tree 3        │
@@ -67,6 +74,7 @@
 ```
 
 ### After: Horizontal Scrolling
+
 ```
 ┌────────────────────────────────────────┐
 │  Tree 1   Tree 2   Tree 3   Tree 4   ►│
@@ -81,6 +89,7 @@
 ### Employee Node Border Colors:
 
 **Available (Green)**
+
 ```
 ┌─────────────┐
 │   ╭──╮      │  ← Green border (#10b981)
@@ -91,6 +100,7 @@
 ```
 
 **Absent (Red)**
+
 ```
 ┌─────────────┐
 │   ╭──╮      │  ← Red border (#ef4444)
@@ -101,6 +111,7 @@
 ```
 
 **Sick (Gray)**
+
 ```
 ┌─────────────┐
 │   ╭──╮      │  ← Gray border (#9ca3af)
@@ -113,12 +124,14 @@
 ## Scrolling Behavior
 
 ### Container:
+
 - **Max height**: ~70% of viewport
 - **Min height**: 500px
 - **Overflow**: Scrollable in both X and Y
 - Scroll bars appear when content exceeds container
 
 ### Large Organizations:
+
 ```
 Viewport
 ┌──────────────────────────────────┐
@@ -144,11 +157,13 @@ Viewport
 ## Tooltip Details
 
 ### Information Shown:
+
 1. **Full Name** (bold, larger font)
 2. **Position** (smaller, gray)
 3. **Current Status** (Available/Absent/Sick Leave)
 
 ### Positioning:
+
 - Appears **below** the employee node
 - Centered horizontally
 - Small arrow points up to the node
@@ -156,6 +171,7 @@ Viewport
 - High z-index (1000) to appear above everything
 
 ### Styling:
+
 - Dark background (#1f2937)
 - White text
 - Rounded corners (8px)
@@ -165,11 +181,13 @@ Viewport
 ## Space Efficiency
 
 ### Before:
+
 - 4 employees fit horizontally on 1920px screen
 - Large amount of wasted space
 - Difficult to see large hierarchies
 
 ### After:
+
 - 16+ employees fit horizontally on 1920px screen
 - **4x more efficient** use of space
 - Much easier to see complete org structure
@@ -182,4 +200,4 @@ Viewport
 ✅ **Details on Demand**: Hover to see full information  
 ✅ **Clean Interface**: Less clutter, more information  
 ✅ **Better Performance**: Smaller DOM elements render faster  
-✅ **Responsive**: Works well on different screen sizes  
+✅ **Responsive**: Works well on different screen sizes

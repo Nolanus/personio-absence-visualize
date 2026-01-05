@@ -3,6 +3,7 @@
 ## UI Improvements: Compact & Scrollable
 
 ### Issue: Graph Too Large
+
 - Organizational chart was too large to fit in the visible area
 - Employee boxes took up too much space
 - No way to navigate large org structures
@@ -10,13 +11,16 @@
 ### Solutions:
 
 #### 1. Scrollable Container (`App.css`)
+
 - Made org-chart-container scrollable in both X and Y directions
 - Added max-height: `calc(100vh - 400px)` for vertical scrolling
 - Added min-height: 500px for consistency
 - Set `overflow: auto` for both directions
 
 #### 2. Compact Employee Nodes (`EmployeeNode.css`)
+
 **Size Reduction:**
+
 - Avatar: 60px → 40px
 - Width: 250px → 100-120px
 - Changed layout from horizontal to vertical (column)
@@ -24,6 +28,7 @@
 - Position hidden by default
 
 **Hover Tooltips:**
+
 - Added dark tooltip that appears on hover
 - Shows full employee information:
   - Full name (bold)
@@ -33,6 +38,7 @@
 - z-index: 1000 to appear above other elements
 
 #### 3. Updated Layout (`OrgChart.css`)
+
 - Changed flex-wrap to `nowrap` to prevent trees from wrapping
 - Trees now display horizontally side-by-side
 - Increased gap between trees: 40px → 60px
@@ -41,10 +47,12 @@
 ## Bug Fix: Empty Absences Array
 
 ### Issue: /api/absences Returns Empty Array
+
 - Absences endpoint was not returning any data
 - Even when absences existed in Personio
 
 ### Root Cause:
+
 - Personio API uses pagination
 - Previous implementation only fetched first page (200 records max)
 - No offset/pagination handling
@@ -52,11 +60,13 @@
 ### Solution (`backend/server.js`):
 
 **1. Pagination Loop:**
+
 - Implemented while loop to fetch all pages
 - Starts at offset 0, increments by 200
 - Continues until no more data or safety limit (1000 records)
 
 **2. Better Logging:**
+
 - Added console.log for debugging:
   - Request URL with parameters
   - Number of records per page
@@ -65,12 +75,14 @@
 - Helps diagnose issues with Personio API
 
 **3. Response Format:**
+
 - Concatenates all pages into single array
 - Returns unified response: `{ success: true, data: [...] }`
 
 ## Summary of Changes
 
 ### Files Modified:
+
 1. `frontend/src/App.css` - Scrollable container
 2. `frontend/src/components/EmployeeNode.jsx` - Added tooltip
 3. `frontend/src/components/EmployeeNode.css` - Compact design + tooltip styles
@@ -78,6 +90,7 @@
 5. `backend/server.js` - Pagination + logging for absences
 
 ### Visual Changes:
+
 - ✅ Employee boxes 60% smaller
 - ✅ Hover shows full details
 - ✅ Scrollable in both directions
@@ -85,6 +98,7 @@
 - ✅ Better use of screen space
 
 ### Backend Improvements:
+
 - ✅ Fetches all absence pages
 - ✅ Better error logging
 - ✅ Request/response tracking
@@ -95,6 +109,7 @@
 To verify the fixes:
 
 1. **Start the application:**
+
    ```bash
    npm start
    ```
@@ -102,7 +117,6 @@ To verify the fixes:
 2. **Check employee nodes:**
    - Should be much smaller (compact)
    - Hover to see tooltip with full info
-   
 3. **Check scrolling:**
    - If org chart is large, scroll bars should appear
    - Should scroll smoothly in both X and Y
@@ -115,7 +129,6 @@ To verify the fixes:
      Total absences fetched: 15
      ```
    - Employee status colors should now work correctly
-   
 5. **Backend logs:**
    - Watch terminal for API request logs
    - Should see successful requests with record counts
