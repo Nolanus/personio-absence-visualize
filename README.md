@@ -195,13 +195,21 @@ The following steps must be performed in the Azure portal by a tenant administra
 
 ### Docker deployment (single container)
 
-1. Build the Docker image:
+1. Pull or Build the Docker image:
 
+   **Pull from GitHub Container Registry (recommended):**
    ```bash
-   docker build -t personio-schedule-viewer .
+   docker pull ghcr.io/nolanus/personio-absence-visualize:latest
+   # Or a specific version/SHA:
+   # docker pull ghcr.io/nolanus/personio-absence-visualize:sha-31829e7
    ```
 
-2. Run the container with the required environment variables:
+   **Or Build locally:**
+   ```bash
+   docker build -t personio-absence-visualize .
+   ```
+
+2. Run the container with the required environment variables: (using the image name from above)
 
    ```bash
    docker run \
@@ -214,7 +222,7 @@ The following steps must be performed in the Azure portal by a tenant administra
      -e ALLOWED_ORIGIN=https://your-production-domain.example.com \
      -e PORT=8080 \
      -p 8080:8080 \
-     personio-schedule-viewer
+     ghcr.io/nolanus/personio-absence-visualize:latest
    ```
 
 ### Docker Compose (recommended)
