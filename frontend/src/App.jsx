@@ -3,8 +3,15 @@ import { format, addDays, subDays } from 'date-fns';
 import OrgChart from './components/OrgChart';
 import DatePicker from './components/DatePicker';
 import './App.css';
+import { AuthenticatedTemplate, UnauthenticatedTemplate, useMsal } from '@azure/msal-react';
+import { InteractionStatus, InteractionType } from '@azure/msal-browser';
+import { msalInstance, loginRequest } from './authConfig';
 
-const API_BASE_URL = 'http://localhost:3001/api';
+// When running behind the Node.js server and Docker, the frontend and API share the same origin.
+const API_BASE_URL = '/api';
+const RUNTIME_CONFIG = window.__SCHEDULE_VIEWER_CONFIG__ || {};
+const AUTH_ENABLED = RUNTIME_CONFIG.authEnabled !== false;
+const COMPANY_NAME = RUNTIME_CONFIG.companyName || 'Organization';
 
 function App() {
   // Initialize state from URL params
@@ -12,38 +19,82 @@ function App() {
     const params = new URLSearchParams(window.location.search);
     const dateParam = params.get('date');
     const modeParam = params.get('mode');
-    
-    return {
+    const themeParam = params.get('theme');
+
+    const initialState = {
       date: dateParam ? new Date(dateParam) : new Date(),
-      mode: ['direct-count', 'direct-hours', 'all-count', 'all-hours'].includes(modeParam) 
-        ? modeParam 
-        : 'direct-count'
+      mode: ['direct-count', 'direct-hours', 'all-count', 'all-hours'].includes(modeParam)
+        ? modeParam
+        : 'direct-count',
+      darkMode:
+        themeParam === 'dark' || (themeParam === null && localStorage.getItem('theme') === 'dark'),
     };
+    return initialState;
   };
-  
+
   const initialState = getInitialState();
-  
+
+  // Helper to check if date is valid
+  const isValidDate = (date) => date instanceof Date && !isNaN(date);
+
+  const safeFormat = (date, formatStr) => {
+    if (!isValidDate(date)) return 'Invalid Date';
+    return format(date, formatStr);
+  };
+
+  const { instance, accounts } = useMsal();
+  const [accessToken, setAccessToken] = useState(null);
+  const [authError, setAuthError] = useState(null);
+
+  useEffect(() => {
+    if (accounts.length > 0) {
+      const request = {
+        ...loginRequest,
+        account: accounts[0],
+      };
+      instance
+        .acquireTokenSilent(request)
+        .then((response) => {
+          setAccessToken(response.accessToken);
+          setAuthError(null);
+        })
+        .catch((e) => {
+          console.error('[Auth] AcquireTokenSilent failed:', e);
+          setAuthError(e);
+        });
+    }
+  }, [instance, accounts]);
+
   const [employees, setEmployees] = useState([]);
   const [absences, setAbsences] = useState([]);
   const [timeOffTypes, setTimeOffTypes] = useState([]);
-  const [selectedDate, setSelectedDate] = useState(initialState.date);
+  const [selectedDate, setSelectedDate] = useState(
+    isValidDate(initialState.date) ? initialState.date : new Date(),
+  );
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [publicHolidays, setPublicHolidays] = useState([]);
   const [progressBarMode, setProgressBarMode] = useState(initialState.mode);
   const [isFullscreen, setIsFullscreen] = useState(false);
-  const [layout, setLayout] = useState('top'); // 'top' or 'left'
+  const [layout, setLayout] = useState('top'); // 'top', 'left', 'bottom', 'right'
+  const [lastAbsenceSync, setLastAbsenceSync] = useState(null);
+  const [darkMode, setDarkMode] = useState(initialState.darkMode);
   const chartRef = useRef(null);
-  
+
   // Update URL when state changes
   useEffect(() => {
+    if (!isValidDate(selectedDate)) return;
     const params = new URLSearchParams();
-    params.set('date', format(selectedDate, 'yyyy-MM-dd'));
+    params.set('date', safeFormat(selectedDate, 'yyyy-MM-dd'));
     params.set('mode', progressBarMode);
-    
+    if (darkMode) params.set('theme', 'dark');
+
     const newUrl = `${window.location.pathname}?${params.toString()}`;
     window.history.replaceState({}, '', newUrl);
-  }, [selectedDate, progressBarMode]);
+
+    // Also save to localStorage for persistence
+    localStorage.setItem('theme', darkMode ? 'dark' : 'light');
+  }, [selectedDate, progressBarMode, darkMode]);
 
   // Fullscreen handler
   const toggleFullscreen = () => {
@@ -61,28 +112,52 @@ function App() {
     const handleFullscreenChange = () => {
       setIsFullscreen(!!document.fullscreenElement);
     };
-    
+
     document.addEventListener('fullscreenchange', handleFullscreenChange);
     return () => document.removeEventListener('fullscreenchange', handleFullscreenChange);
   }, []);
 
-  // Load initial data
+  // Load initial data once we have an access token (or immediately if auth is disabled)
   useEffect(() => {
+    if (AUTH_ENABLED && !accessToken) return;
     loadData();
     loadPublicHolidays();
-  }, []);
+  }, [accessToken]);
 
-  // Load absences when date changes
+  // Load absences when date changes (or immediately if auth is disabled)
   useEffect(() => {
-    if (employees.length > 0) {
+    if (employees.length > 0 && (!AUTH_ENABLED || accessToken)) {
       loadAbsences();
     }
-  }, [selectedDate, employees]);
+  }, [selectedDate, employees, accessToken]);
 
   // Reload holidays when year changes
   useEffect(() => {
+    if (!isValidDate(selectedDate)) return;
     loadPublicHolidays();
   }, [selectedDate.getFullYear()]);
+
+  const authorizedFetch = useCallback(
+    (url, options = {}) => {
+      if (AUTH_ENABLED && !accessToken) {
+        throw new Error('No Microsoft access token available');
+      }
+      const headers = {
+        ...(options.headers || {}),
+      };
+
+      if (AUTH_ENABLED && accessToken) {
+        headers.Authorization = `Bearer ${accessToken}`;
+      }
+
+      return fetch(url, { ...options, headers });
+    },
+    [accessToken],
+  );
+
+  const [profilePictures, setProfilePictures] = useState({});
+  const loadingImagesRef = useRef(new Set());
+  const failedImagesRef = useRef(new Set());
 
   async function loadData() {
     try {
@@ -91,8 +166,8 @@ function App() {
 
       // Load employees and time-off types in parallel
       const [employeesRes, timeOffTypesRes] = await Promise.all([
-        fetch(`${API_BASE_URL}/employees`),
-        fetch(`${API_BASE_URL}/time-off-types`),
+        authorizedFetch(`${API_BASE_URL}/employees`),
+        authorizedFetch(`${API_BASE_URL}/time-off-types`),
       ]);
 
       if (!employeesRes.ok || !timeOffTypesRes.ok) {
@@ -101,52 +176,78 @@ function App() {
 
       const employeesData = await employeesRes.json();
       const timeOffTypesData = await timeOffTypesRes.json();
+      const loadedEmployees = employeesData.data || [];
 
-      setEmployees(employeesData.data || []);
+      setEmployees(loadedEmployees);
       setTimeOffTypes(timeOffTypesData.data || []);
 
       // Load absences for initial date range
       await loadAbsences();
+
+      // Load profile pictures for all employees
+      loadProfilePictures(loadedEmployees);
     } catch (err) {
       setError(err.message);
-      console.error('Error loading data:', err);
     } finally {
       setLoading(false);
     }
   }
 
+  const loadProfilePictures = useCallback(
+    async (employeeList) => {
+      const newProfilePictures = {};
+
+      // Simply map employee IDs to their API endpoint URLs
+      // The backend caches these for 24 hours, so this is efficient
+      for (const emp of employeeList) {
+        const id = emp.attributes?.id?.value;
+        if (id && !profilePictures[id] && !failedImagesRef.current.has(id)) {
+          newProfilePictures[id] = `${API_BASE_URL}/profile-picture/${id}`;
+        }
+      }
+
+      if (Object.keys(newProfilePictures).length > 0) {
+        setProfilePictures((prev) => ({ ...prev, ...newProfilePictures }));
+      }
+    },
+    [profilePictures],
+  );
+
   async function loadPublicHolidays() {
+    if (!isValidDate(selectedDate)) return;
     try {
       const year = selectedDate.getFullYear();
       // Using Nager.Date API - free and open public holidays API
       // Germany country code: DE
       const response = await fetch(`https://date.nager.at/api/v3/publicholidays/${year}/DE`);
-      
+
       if (!response.ok) {
-        console.warn('Failed to fetch public holidays');
         return;
       }
-      
+
       const holidays = await response.json();
       // Keep all holidays (both national and regional)
-      console.log(`Loaded ${holidays.length} public holidays for ${year}`);
       setPublicHolidays(holidays);
     } catch (err) {
-      console.warn('Error loading public holidays:', err);
       // Don't fail the app if holidays can't be loaded
     }
   }
 
   async function loadAbsences() {
+    if (!isValidDate(selectedDate)) return;
     try {
-      // Load ±30 days from selected date
-      const startDate = format(subDays(selectedDate, 30), 'yyyy-MM-dd');
-      const endDate = format(addDays(selectedDate, 60), 'yyyy-MM-dd'); // Extend to 60 days forward
+      // Request the full month containing the selected date for efficient caching
+      // This way, navigating within the same month uses cached data
+      const year = selectedDate.getFullYear();
+      const month = selectedDate.getMonth(); // 0-indexed
 
-      console.log(`Loading absences from ${startDate} to ${endDate}`);
+      // First day of the month
+      const startDate = format(new Date(year, month, 1), 'yyyy-MM-dd');
+      // Last day of the month
+      const endDate = format(new Date(year, month + 1, 0), 'yyyy-MM-dd');
 
-      const response = await fetch(
-        `${API_BASE_URL}/absences?start_date=${startDate}&end_date=${endDate}`
+      const response = await authorizedFetch(
+        `${API_BASE_URL}/absences?start_date=${startDate}&end_date=${endDate}`,
       );
 
       if (!response.ok) {
@@ -155,236 +256,445 @@ function App() {
 
       const data = await response.json();
       const absenceData = data.data || [];
-      console.log(`Loaded ${absenceData.length} absences`);
-      
-      // Log unique employees with absences
-      const employeesWithAbsences = new Set();
-      absenceData.forEach(abs => {
-        const empId = abs.attributes?.employee?.attributes?.id?.value;
-        const email = abs.attributes?.employee?.attributes?.email?.value;
-        if (empId) {
-          employeesWithAbsences.add(`${empId} (${email})`);
-        }
-      });
-      console.log(`Employees with absences:`, Array.from(employeesWithAbsences));
-      
+
       setAbsences(absenceData);
+      if (data.lastUpdated) {
+        setLastAbsenceSync(data.lastUpdated);
+      }
     } catch (err) {
-      console.error('Error loading absences:', err);
+      // Error handling - silently fail to avoid disrupting UI
     }
   }
 
   // Mapping from Personio state names to API county codes
   const stateToCountyCode = {
     'Baden-Wuerttemberg': 'DE-BW',
-    'Bayern': 'DE-BY',
-    'Berlin': 'DE-BE',
-    'Brandenburg': 'DE-BB',
-    'Bremen': 'DE-HB',
-    'Hamburg': 'DE-HH',
-    'Hessen': 'DE-HE',
+    Bayern: 'DE-BY',
+    Berlin: 'DE-BE',
+    Brandenburg: 'DE-BB',
+    Bremen: 'DE-HB',
+    Hamburg: 'DE-HH',
+    Hessen: 'DE-HE',
     'Mecklenburg-Vorpommern': 'DE-MV',
-    'Niedersachsen': 'DE-NI',
-    'NRW': 'DE-NW',
+    Niedersachsen: 'DE-NI',
+    NRW: 'DE-NW',
     'Rheinland-Pfalz': 'DE-RP',
-    'Saarland': 'DE-SL',
-    'Sachsen': 'DE-SN',
+    Saarland: 'DE-SL',
+    Sachsen: 'DE-SN',
     'Sachsen-Anhalt': 'DE-ST',
     'Schleswig-Holstein': 'DE-SH',
-    'Thueringen': 'DE-TH'
+    Thueringen: 'DE-TH',
   };
 
   // Get employee status for selected date
-  const getEmployeeStatus = useCallback((employeeId) => {
-    const selectedDateStr = format(selectedDate, 'yyyy-MM-dd');
-    const dayOfWeek = selectedDate.getDay(); // 0 = Sunday, 1 = Monday, ..., 6 = Saturday
-    
-    // Get employee's state from holiday calendar
-    const employee = employees.find(emp => emp.attributes?.id?.value === employeeId);
-    const employeeState = employee?.attributes?.holiday_calendar?.value?.attributes?.state;
-    const employeeCountyCode = employeeState ? stateToCountyCode[employeeState] : null;
-    
-    // Check if selected date is a public holiday for this employee
-    const publicHoliday = publicHolidays.find(holiday => {
-      if (holiday.date !== selectedDateStr) return false;
-      // Holiday is valid if it's global OR if it applies to employee's region
-      return holiday.global || (employeeCountyCode && holiday.counties?.includes(employeeCountyCode));
-    });
-    const isPublicHoliday = !!publicHoliday;
-    
-    // PRIORITY 1: Check for absence first (absence always takes priority)
-    const absence = absences.find((abs) => {
-      const empId = abs.attributes?.employee?.attributes?.id?.value;
-      if (empId !== employeeId) return false;
+  const getEmployeeStatus = useCallback(
+    (employeeId) => {
+      if (!isValidDate(selectedDate)) return { status: 'loading', label: 'Loading...' };
+      const selectedDateStr = safeFormat(selectedDate, 'yyyy-MM-dd');
+      const dayOfWeek = selectedDate.getDay(); // 0 = Sunday, 1 = Monday, ..., 6 = Saturday
 
-      // Check if absence covers selected date
-      // Dates from API are in ISO format: "2026-01-02T00:00:00+01:00"
-      // Extract just the date part for comparison
-      const startDate = abs.attributes?.start_date?.split('T')[0];
-      const endDate = abs.attributes?.end_date?.split('T')[0];
-      
-      if (!startDate || !endDate) return false;
-      
-      const isInRange = startDate <= selectedDateStr && endDate >= selectedDateStr;
-      
-      return isInRange;
-    });
+      // Get employee's state from holiday calendar
+      const employee = employees.find((emp) => emp.attributes?.id?.value === employeeId);
+      const employeeState = employee?.attributes?.holiday_calendar?.value?.attributes?.state;
+      const employeeCountyCode = employeeState ? stateToCountyCode[employeeState] : null;
 
-    if (absence) {
-      // Check if it's sick leave
-      const absenceTypeName = absence.attributes?.time_off_type?.attributes?.name?.toLowerCase() || '';
-      const isSick = absenceTypeName.includes('sick') || absenceTypeName.includes('illness');
-      
-      if (isSick) {
-        return { status: 'sick', reason: 'sick-leave', label: 'Sick' };
-      } else {
-        return { status: 'absent', reason: 'absence', label: 'Absent' };
-      }
-    }
-    
-    // PRIORITY 2: Check if it's a public holiday
-    if (isPublicHoliday) {
-      return { status: 'non-working-day', reason: 'public-holiday', label: publicHoliday.name };
-    }
-    
-    // PRIORITY 3: Check if employee works on this day of the week
-    if (employee) {
-      const workScheduleValue = employee.attributes?.work_schedule?.value;
-      
-      // Work schedule is nested: value.attributes contains the day info
-      const workSchedule = workScheduleValue?.attributes;
-      
-      if (workSchedule && typeof workSchedule === 'object') {
-        const dayNames = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
-        const dayName = dayNames[dayOfWeek];
-        const hoursForDay = workSchedule[dayName];
-        
-        // Personio returns time strings like "08:00" for working days and "00:00" for non-working days
-        if (hoursForDay === '00:00' || hoursForDay === 0 || !hoursForDay) {
-          // Check if it's weekend
-          const isWeekend = dayOfWeek === 0 || dayOfWeek === 6; // Sunday or Saturday
-          return {
-            status: 'non-working-day',
-            reason: isWeekend ? 'weekend' : 'off-day',
-            label: isWeekend ? 'Weekend' : 'Off Day'
-          };
+      // Check if selected date is a public holiday for this employee
+      const publicHoliday = publicHolidays.find((holiday) => {
+        if (holiday.date !== selectedDateStr) return false;
+        // Holiday is valid if it's global OR if it applies to employee's region
+        return (
+          holiday.global || (employeeCountyCode && holiday.counties?.includes(employeeCountyCode))
+        );
+      });
+      const isPublicHoliday = !!publicHoliday;
+
+      // Base working/non-working status
+      let baseStatus = 'available';
+      let baseReason = 'available';
+      let baseLabel = 'Available';
+
+      // Check if it's a public holiday
+      if (isPublicHoliday) {
+        baseStatus = 'non-working-day';
+        baseReason = 'public-holiday';
+        baseLabel = publicHoliday.name;
+      } else if (employee) {
+        // Check work schedule
+        const workSchedule = employee.attributes?.work_schedule?.value?.attributes;
+        if (workSchedule && typeof workSchedule === 'object') {
+          const dayNames = [
+            'sunday',
+            'monday',
+            'tuesday',
+            'wednesday',
+            'thursday',
+            'friday',
+            'saturday',
+          ];
+          const hoursForDay = workSchedule[dayNames[dayOfWeek]];
+          if (hoursForDay === '00:00' || hoursForDay === 0 || !hoursForDay) {
+            const isWeekend = dayOfWeek === 0 || dayOfWeek === 6;
+            baseStatus = 'non-working-day';
+            baseReason = isWeekend ? 'weekend' : 'off-day';
+            baseLabel = isWeekend ? 'Weekend' : 'Off Day';
+          }
         }
       }
-    }
 
-    // PRIORITY 4: Default to available
-    return { status: 'available', reason: 'available', label: 'Available' };
-  }, [selectedDate, absences, publicHolidays, employees]);
+      // Initialize AM/PM statuses with base status
+      let amStatus = baseStatus;
+      let pmStatus = baseStatus;
+      let amReason = baseReason;
+      let pmReason = baseReason;
+      let amLabel = baseLabel;
+      let pmLabel = baseLabel;
 
-  if (loading) {
-    return (
-      <div className="app">
-        <div className="loading">Loading employee data...</div>
-      </div>
-    );
-  }
+      // Filter all absences for this employee on this date
+      const relevantAbsences = absences.filter((abs) => {
+        const empId = abs.attributes?.employee?.attributes?.id?.value;
+        if (empId !== employeeId) return false;
 
-  if (error) {
-    return (
-      <div className="app">
-        <div className="error">
-          <h2>Error</h2>
-          <p>{error}</p>
-          <p>Make sure the backend server is running and Personio credentials are configured.</p>
+        const startDate = abs.attributes?.start_date?.split('T')[0];
+        const endDate = abs.attributes?.end_date?.split('T')[0];
+        return startDate <= selectedDateStr && endDate >= selectedDateStr;
+      });
+
+      // Helper to get weight for precedence (lower is higher priority)
+      const getStatusWeight = (status) => {
+        if (status === 'absent') return 1;
+        if (status === 'sick') return 2;
+        if (status === 'non-working-day') return 3;
+        return 4;
+      };
+
+      relevantAbsences.forEach((abs) => {
+        const startDate = abs.attributes?.start_date?.split('T')[0];
+        const endDate = abs.attributes?.end_date?.split('T')[0];
+        const isStartDay = selectedDateStr === startDate;
+        const isEndDay = selectedDateStr === endDate;
+
+        const absenceType = abs.attributes?.time_off_type?.attributes;
+        const absenceTypeName = absenceType?.name?.toLowerCase() || '';
+        const absenceCategory = absenceType?.category || '';
+
+        const isSick =
+          absenceCategory === 'sick_leave' ||
+          absenceTypeName.includes('sick') ||
+          absenceTypeName.includes('illness');
+
+        const typeStatus = isSick ? 'sick' : 'absent';
+        const typeReason = isSick ? 'sick-leave' : 'absence';
+
+        // Determine segments affected by this record
+        let affectsAM = true;
+        let affectsPM = true;
+
+        if (isStartDay && abs.attributes?.half_day_start) {
+          affectsPM = false; // Swapped: Start day half-day -> only AM affected
+        }
+        if (isEndDay && abs.attributes?.half_day_end) {
+          affectsAM = false; // Swapped: End day half-day -> only PM affected
+        }
+
+        // Special case: single day that is half_day_start AND half_day_end? Usually unlikely in Personio but let's be safe.
+        // If affectsAM is false and affectsPM is false, it means it's a zero-length absence?
+        // Actually, if it's a single day and "half_day_start" is true, it usually means the afternoon.
+
+        // Apply precedence
+        if (affectsAM && getStatusWeight(typeStatus) < getStatusWeight(amStatus)) {
+          amStatus = typeStatus;
+          amReason = typeReason;
+        }
+        if (affectsPM && getStatusWeight(typeStatus) < getStatusWeight(pmStatus)) {
+          pmStatus = typeStatus;
+          pmReason = typeReason;
+        }
+      });
+
+      // Final result determination
+      const isHalfDay = amStatus !== pmStatus;
+
+      // Overall status (for colors and routing) follow precedence
+      const finalStatus =
+        getStatusWeight(amStatus) <= getStatusWeight(pmStatus) ? amStatus : pmStatus;
+
+      // Status label logic
+      let finalLabel = baseLabel;
+      if (amStatus === pmStatus && amStatus !== baseStatus) {
+        // Full day absence
+        const absence = relevantAbsences[0]; // Just for date formatting
+        const start = format(new Date(absence.attributes.start_date), 'dd.MM.');
+        const end = format(new Date(absence.attributes.end_date), 'dd.MM.');
+        const dateLabel = start === end ? `(${start})` : `(${start} - ${end})`;
+        finalLabel = `${amStatus === 'sick' ? 'Sick' : 'Absent'} ${dateLabel}`;
+      } else if (isHalfDay) {
+        // Half day absence
+        // User said: "label should be absence, as absence should always take precedence"
+        // If mixed with working, use "½ Absent" or "½ Sick"
+        // If mixed with each other (e.g. AM Absent, PM Sick), use "Absent" (due to precedence)
+        const absHalf = amStatus === 'absent' || amStatus === 'sick' ? 'AM' : 'PM';
+        const activeStatus = amStatus === 'absent' || amStatus === 'sick' ? amStatus : pmStatus;
+
+        // If BOTH are absences but different, precedence wins label
+        const displayStatus = amStatus === 'absent' || pmStatus === 'absent' ? 'Absent' : 'Sick';
+
+        finalLabel = `½ ${displayStatus}`;
+      }
+
+      return {
+        status: finalStatus,
+        label: finalLabel,
+        isHalfDay: isHalfDay,
+        amStatus: amStatus,
+        pmStatus: pmStatus,
+        absentHalf: amStatus !== baseStatus ? 'first' : 'second', // Used by OrgChart for split detection
+      };
+    },
+    [selectedDate, absences, publicHolidays, employees]
+  );
+
+  const Dashboard = (
+    <div className={`app ${darkMode ? 'dark-mode' : ''}`}>
+      {authError && (
+        <div
+          className="auth-error-banner"
+          style={{
+            backgroundColor: '#fde8e8',
+            color: '#c53030',
+            padding: '12px',
+            textAlign: 'center',
+            position: 'absolute',
+            top: 0,
+            width: '100%',
+            zIndex: 100,
+          }}
+        >
+          <p>
+            <strong>Authentication Warning:</strong> Could not acquire API access token.
+          </p>
+          <p>Details: {authError.message}</p>
         </div>
-      </div>
-    );
-  }
+      )}
 
-  return (
-    <div className="app">
       <header className="app-header">
         <div className="header-content">
+          {/* Left: Logo */}
           <div className="header-left">
-            <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-              <h1>Personio Absence Visualizer</h1>
-              <button 
-                className="layout-button"
-                onClick={() => setLayout(layout === 'top' ? 'left' : 'top')}
-                title={`Switch to ${layout === 'top' ? 'Left' : 'Top'} Layout`}
-              >
-                {layout === 'top' ? '↔' : '↕'}
-              </button>
-              <button 
-                className="fit-button"
-                onClick={() => chartRef.current?.fit()}
-                title="Fit to Screen"
-              >
-                ⤢
-              </button>
-              <button 
-                className="fullscreen-button"
-                onClick={toggleFullscreen}
-                title={isFullscreen ? 'Exit Fullscreen' : 'Enter Fullscreen'}
-              >
-                {isFullscreen ? '⊗' : '⛶'}
-              </button>
-            </div>
-            <div className="info-bar">
-              <span>📊 {employees.length} employee{employees.length !== 1 ? 's' : ''}</span>
+            <div className="logo">
+              <div className="logo-icon">
+                <img
+                  src="/absence_visualizer_icon_light.png"
+                  alt="Logo"
+                  style={{ width: '28px', height: '28px', borderRadius: '4px' }}
+                />
+              </div>
+              <div className="logo-text">Personio absence visualizer</div>
             </div>
           </div>
-          
+
+          {/* Center: Date Picker */}
           <div className="header-center">
-            <DatePicker
-              selectedDate={selectedDate}
-              onDateChange={setSelectedDate}
-            />
+            <DatePicker selectedDate={selectedDate} onDateChange={setSelectedDate} />
           </div>
-          
+
+          {/* Right: User Profile */}
           <div className="header-right">
-            <div className="header-right-content">
-              <div className="progress-bar-mode">
-                <label htmlFor="progress-mode">Progress Bar:</label>
-                <select 
-                  id="progress-mode"
-                  value={progressBarMode} 
-                  onChange={(e) => setProgressBarMode(e.target.value)}
-                >
-                  <option value="direct-count">Direct Reportees (Count)</option>
-                  <option value="direct-hours">Direct Reportees (Hours)</option>
-                  <option value="all-count">All Reportees (Count)</option>
-                  <option value="all-hours">All Reportees (Hours)</option>
-                </select>
+            {AUTH_ENABLED ? (
+              <div className="user-profile">
+                <span className="user-name">{accounts[0]?.name?.split(' ')[0] || 'Me'}</span>
+                <div className="user-avatar">
+                  {/* Try to find user's own picture in the loaded list, otherwise generic */}
+                  {/* We reuse the generic logic or just an icon for now */}
+                  <img
+                    src={
+                      profilePictures[accounts[0]?.homeAccountId] ||
+                      `https://ui-avatars.com/api/?name=${accounts[0]?.name}&background=random`
+                    }
+                    alt="Me"
+                    onError={(e) => {
+                      e.target.onerror = null;
+                      e.target.src = `https://ui-avatars.com/api/?name=${accounts[0]?.name}&background=random`;
+                    }}
+                  />
+                </div>
+                <span style={{ fontSize: '0.8rem', color: '#9ca3af' }}>▼</span>
+
+                <div className="logout-dropdown">
+                  <button
+                    className="logout-button"
+                    onClick={async () => {
+                      try {
+                        // 1. Clear backend session cookie
+                        await fetch(`${API_BASE_URL}/logout`, {
+                          method: 'POST',
+                          credentials: 'include',
+                        });
+                      } catch (err) {
+                        console.error('Logout endpoint error:', err);
+                      }
+
+                      // 2. Perform "Local Logout" in MSAL
+                      // This clears local storage/cache without redirecting to M365 end-session endpoint
+                      instance.logoutRedirect({
+                        account: accounts[0],
+                        onRedirectNavigate: () => {
+                          // Returning false prevents the browser from navigating to the M365 logout page
+                          return false;
+                        },
+                      });
+
+                      // 3. Force a reload to the login page immediately
+                      window.location.href = window.location.origin;
+                    }}
+                  >
+                    Sign Out
+                  </button>
+                </div>
               </div>
-              <div className="legend">
-                <div className="legend-item">
-                  <span className="legend-color available"></span>
-                  <span>Available</span>
-                </div>
-                <div className="legend-item">
-                  <span className="legend-color absent"></span>
-                  <span>Absent</span>
-                </div>
-                <div className="legend-item">
-                  <span className="legend-color sick"></span>
-                  <span>Sick</span>
-                </div>
-                <div className="legend-item">
-                  <span className="legend-color non-working-day"></span>
-                  <span>Off Day</span>
+            ) : (
+              <div className="user-profile">
+                <span className="user-name">Guest</span>
+                <div className="user-avatar">
+                  <img src="https://ui-avatars.com/api/?name=Guest&background=6b7280" alt="Guest" />
                 </div>
               </div>
-            </div>
+            )}
           </div>
         </div>
       </header>
 
       <div className="org-chart-container">
+        <div className="info-bar-floating">
+          <span className="info-item">{employees.length} employees loaded</span>
+          {lastAbsenceSync && (
+            <>
+              <span className="info-separator">•</span>
+              <span className="info-item">Last sync: {format(lastAbsenceSync, 'HH:mm')}</span>
+            </>
+          )}
+        </div>
+
         <OrgChart
           ref={chartRef}
           employees={employees}
           getEmployeeStatus={getEmployeeStatus}
           progressBarMode={progressBarMode}
           layout={layout}
+          profilePictures={profilePictures}
+          selectedDate={selectedDate}
+          isDarkMode={darkMode}
+          companyName={COMPANY_NAME}
         />
+
+        {/* Floating Legend (Bottom Left) */}
+        <div className="floating-legend">
+          <div className="legend-pill">
+            <span className="dot available"></span> Available
+          </div>
+          <div className="legend-pill">
+            <span className="dot absent"></span> Absent
+          </div>
+          <div className="legend-pill">
+            <span className="dot sick"></span> Sick
+          </div>
+          <div className="legend-pill">
+            <span className="dot off"></span> Off Day
+          </div>
+        </div>
+
+        {/* Floating Controls (Bottom Center) */}
+        <div className="floating-controls">
+          {/* Layout Toggle */}
+          <button
+            className="control-btn"
+            onClick={() => setLayout(layout === 'top' ? 'left' : 'top')}
+            title={`Switch Layout (Current: ${layout})`}
+          >
+            {layout === 'top' ? '↔' : '↕'}
+          </button>
+
+          {/* Theme Toggle */}
+          <button
+            className="control-btn"
+            onClick={() => setDarkMode(!darkMode)}
+            title={`Switch to ${darkMode ? 'Light' : 'Dark'} Mode`}
+          >
+            {darkMode ? '☀️' : '🌙'}
+          </button>
+
+          {/* Progress Mode Select */}
+          <select
+            className="control-select"
+            value={progressBarMode}
+            onChange={(e) => setProgressBarMode(e.target.value)}
+          >
+            <option value="direct-count">Direct (Count)</option>
+            <option value="direct-hours">Direct (Hours)</option>
+            <option value="all-count">All (Count)</option>
+            <option value="all-hours">All (Hours)</option>
+          </select>
+
+          {/* Fit */}
+          <button
+            className="control-btn"
+            onClick={() => chartRef.current?.fit()}
+            title="Fit to Screen"
+          >
+            ⤢
+          </button>
+
+          {/* Fullscreen */}
+          <button
+            className="control-btn"
+            onClick={toggleFullscreen}
+            title={isFullscreen ? 'Exit Fullscreen' : 'Enter Fullscreen'}
+          >
+            {isFullscreen ? '⊗' : '⛶'}
+          </button>
+        </div>
       </div>
     </div>
+  );
+
+  if (!AUTH_ENABLED) {
+    return Dashboard;
+  }
+
+  return (
+    <>
+      <UnauthenticatedTemplate>
+        <div
+          style={{
+            display: 'flex',
+            flexDirection: 'column',
+            alignItems: 'center',
+            justifyContent: 'center',
+            height: '100vh',
+            fontFamily: 'Inter, system-ui, Avenir, Helvetica, Arial, sans-serif',
+          }}
+        >
+          <h1>Personio Absence Visualizer</h1>
+          <p>Please sign in with your Microsoft account to continue.</p>
+          <button
+            onClick={() => instance.loginRedirect(loginRequest)}
+            style={{
+              padding: '10px 20px',
+              fontSize: '16px',
+              backgroundColor: '#0078d4',
+              color: 'white',
+              border: 'none',
+              borderRadius: '4px',
+              cursor: 'pointer',
+              marginTop: '20px',
+            }}
+          >
+            Sign In with Microsoft
+          </button>
+        </div>
+      </UnauthenticatedTemplate>
+
+      <AuthenticatedTemplate>{Dashboard}</AuthenticatedTemplate>
+    </>
   );
 }
 

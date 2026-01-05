@@ -16,6 +16,7 @@ build/
 # Debug/Temp files
 backend/curl_output.txt
 backend/full_index.html
+public/
 
 # Logs
 *.log

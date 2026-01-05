@@ -14,9 +14,9 @@ function EmployeeNode({ employee, status }) {
   const initials = `${firstName.charAt(0)}${lastName.charAt(0)}`.toUpperCase();
 
   useEffect(() => {
-    // Try to load profile picture
+    // Try to load profile picture (served by the same origin backend)
     if (employeeId && !imageError) {
-      const imageUrl = `http://localhost:3001/api/profile-picture/${employeeId}?width=75`;
+      const imageUrl = `/api/profile-picture/${employeeId}?width=75`;
       setProfilePicture(imageUrl);
     }
   }, [employeeId, imageError]);
@@ -29,7 +29,7 @@ function EmployeeNode({ employee, status }) {
   const statusLabels = {
     available: 'Available',
     absent: 'Absent',
-    sick: 'Sick Leave'
+    sick: 'Sick Leave',
   };
 
   const handleClick = () => {
@@ -40,18 +40,14 @@ function EmployeeNode({ employee, status }) {
   };
 
   return (
-    <div 
+    <div
       className={`employee-node status-${status}`}
       onClick={handleClick}
       title={`${firstName} ${lastName} - Click to view in Personio`}
     >
       <div className="employee-avatar">
         {profilePicture && !imageError ? (
-          <img
-            src={profilePicture}
-            alt={`${firstName} ${lastName}`}
-            onError={handleImageError}
-          />
+          <img src={profilePicture} alt={`${firstName} ${lastName}`} onError={handleImageError} />
         ) : (
           <div className="employee-initials">{initials}</div>
         )}
@@ -61,13 +57,13 @@ function EmployeeNode({ employee, status }) {
           {firstName} {lastName}
         </div>
       </div>
-      
+
       {/* Tooltip on hover */}
       <div className="employee-tooltip">
-        <div className="tooltip-name">{firstName} {lastName}</div>
-        {position && (
-          <div className="tooltip-position">{position}</div>
-        )}
+        <div className="tooltip-name">
+          {firstName} {lastName}
+        </div>
+        {position && <div className="tooltip-position">{position}</div>}
         <div className="tooltip-status">Status: {statusLabels[status]}</div>
       </div>
     </div>

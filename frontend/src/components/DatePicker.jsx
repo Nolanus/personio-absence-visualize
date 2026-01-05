@@ -1,29 +1,40 @@
+import { useRef } from 'react';
 import { format, addDays, subDays } from 'date-fns';
 import './DatePicker.css';
 
 function DatePicker({ selectedDate, onDateChange }) {
-  const minDate = subDays(new Date(), 30);
-  const maxDate = addDays(new Date(), 30);
+  const dateInputRef = useRef(null);
+  // Helper to check if date is valid
+  const isValidDate = (date) => date instanceof Date && !isNaN(date);
 
-  // Calculate days offset from today
-  const getDayOffset = (date) => {
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-    date.setHours(0, 0, 0, 0);
-    return Math.round((date - today) / (1000 * 60 * 60 * 24));
-  };
-
-  const currentOffset = getDayOffset(new Date(selectedDate));
-
-  const handleSliderChange = (e) => {
-    const offset = parseInt(e.target.value);
-    const newDate = addDays(new Date(), offset);
-    onDateChange(newDate);
+  const safeFormat = (date, formatStr) => {
+    if (!isValidDate(date)) return 'Invalid Date';
+    return format(date, formatStr);
   };
 
   const handleDateInputChange = (e) => {
-    const newDate = new Date(e.target.value);
-    onDateChange(newDate);
+    const val = e.target.value;
+    if (!val) {
+      // If cleared, default to today
+      onDateChange(new Date());
+      return;
+    }
+    const newDate = new Date(val);
+    if (isValidDate(newDate)) {
+      onDateChange(newDate);
+    }
+  };
+
+  const handleLabelClick = (e) => {
+    e.preventDefault();
+    try {
+      if (dateInputRef.current) {
+        dateInputRef.current.showPicker();
+      }
+    } catch (err) {
+      // Fallback or ignore if not supported (e.g. Safari < 16)
+      // In that case, the htmlFor behavior usually handles focus
+    }
   };
 
   const handleToday = () => {
@@ -31,60 +42,34 @@ function DatePicker({ selectedDate, onDateChange }) {
   };
 
   return (
-    <div className="date-picker">
-      <div className="date-picker-controls">
-        <button
-          className="date-picker-button"
-          onClick={() => onDateChange(subDays(selectedDate, 1))}
-          disabled={selectedDate <= minDate}
-        >
-          ← Previous
-        </button>
-        
+    <div className="date-picker-simple">
+      <button className="date-nav-button" onClick={() => onDateChange(subDays(selectedDate, 1))}>
+        &lt; Previous
+      </button>
+
+      <div className="date-display-wrapper" onClick={handleLabelClick}>
         <input
+          ref={dateInputRef}
           type="date"
-          className="date-picker-input"
-          value={format(selectedDate, 'yyyy-MM-dd')}
-          min={format(minDate, 'yyyy-MM-dd')}
-          max={format(maxDate, 'yyyy-MM-dd')}
+          className="date-input-hidden"
+          value={safeFormat(selectedDate, 'yyyy-MM-dd')}
           onChange={handleDateInputChange}
+          id="date-input-trigger"
         />
-        
-        <button
-          className="date-picker-button"
-          onClick={handleToday}
+        <label
+          htmlFor="date-input-trigger"
+          className="date-display-label"
+          style={{ cursor: 'pointer' }}
         >
-          Today
-        </button>
-        
-        <button
-          className="date-picker-button"
-          onClick={() => onDateChange(addDays(selectedDate, 1))}
-          disabled={selectedDate >= maxDate}
-        >
-          Next →
-        </button>
-      </div>
-      
-      <div className="date-picker-slider">
-        <label htmlFor="date-slider">
-          <span className="slider-label">-30 days</span>
-          <input
-            id="date-slider"
-            type="range"
-            min="-30"
-            max="30"
-            value={currentOffset}
-            onChange={handleSliderChange}
-            className="slider"
-          />
-          <span className="slider-label">+30 days</span>
+          {safeFormat(selectedDate, 'EEE dd. MMM yyyy')} ›
         </label>
       </div>
-      
-      <div className="date-picker-display">
-        {format(selectedDate, 'EEEE, MMMM d, yyyy')}
-      </div>
+
+      <button className="date-nav-button" onClick={() => onDateChange(addDays(selectedDate, 1))}>
+        Next &gt;
+      </button>
+
+      {/* Helper to jump to today if needed, maybe hidden or small icon? Mockup doesn't show it explicitly but it's useful. Keeping it out for strict mockup adherence or maybe small text? Let's hide it for now to match visual. */}
     </div>
   );
 }

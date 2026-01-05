@@ -1,115 +1,62 @@
-.date-picker {
+.date-picker-simple {
   display: flex;
-  flex-direction: column;
-  gap: 20px;
-}
-
-.date-picker-controls {
-  display: flex;
-  gap: 15px;
-  justify-content: center;
   align-items: center;
-  flex-wrap: wrap;
+  gap: 8px;
+  background: var(--bg-color);
+  padding: 4px;
+  border-radius: 8px;
 }
 
-.date-picker-button {
-  padding: 10px 20px;
-  background: #667eea;
-  color: white;
+.date-nav-button {
+  background: var(--pill-bg);
   border: none;
-  border-radius: 8px;
-  font-size: 1rem;
+  border-radius: 6px;
+  padding: 6px 12px;
+  color: var(--text-muted);
+  font-size: 14px;
   font-weight: 500;
   cursor: pointer;
-  transition: background 0.2s;
+  transition: all 0.2s;
+  box-shadow: 0 1px 2px var(--header-shadow);
 }
 
-.date-picker-button:hover:not(:disabled) {
-  background: #5568d3;
+.date-nav-button:hover {
+  color: var(--text-primary);
+  background: var(--dropdown-hover);
+  box-shadow: 0 2px 4px var(--header-shadow);
 }
 
-.date-picker-button:disabled {
-  background: #d1d5db;
-  cursor: not-allowed;
+.date-display-wrapper {
+  position: relative;
 }
 
-.date-picker-input {
-  padding: 10px 20px;
-  border: 2px solid #e5e7eb;
-  border-radius: 8px;
-  font-size: 1rem;
-  cursor: pointer;
-  transition: border-color 0.2s;
-}
-
-.date-picker-input:hover {
-  border-color: #667eea;
-}
-
-.date-picker-input:focus {
-  outline: none;
-  border-color: #667eea;
-}
-
-.date-picker-slider {
+.date-input-hidden {
+  position: absolute;
+  top: 0;
+  left: 0;
   width: 100%;
-}
-
-.date-picker-slider label {
-  display: flex;
-  align-items: center;
-  gap: 15px;
-}
-
-.slider-label {
-  font-size: 0.875rem;
-  color: #6b7280;
-  font-weight: 500;
-  min-width: 70px;
-  text-align: center;
-}
-
-.slider {
-  flex: 1;
-  height: 8px;
-  border-radius: 5px;
-  background: #e5e7eb;
-  outline: none;
-  -webkit-appearance: none;
-}
-
-.slider::-webkit-slider-thumb {
-  -webkit-appearance: none;
-  appearance: none;
-  width: 20px;
-  height: 20px;
-  border-radius: 50%;
-  background: #667eea;
+  height: 100%;
+  opacity: 0;
   cursor: pointer;
-  transition: background 0.2s;
+  z-index: 2;
 }
 
-.slider::-webkit-slider-thumb:hover {
-  background: #5568d3;
-}
-
-.slider::-moz-range-thumb {
-  width: 20px;
-  height: 20px;
-  border-radius: 50%;
-  background: #667eea;
-  cursor: pointer;
-  border: none;
-  transition: background 0.2s;
-}
-
-.slider::-moz-range-thumb:hover {
-  background: #5568d3;
-}
-
-.date-picker-display {
-  text-align: center;
-  font-size: 1.25rem;
+.date-display-label {
+  display: block;
+  background: var(--pill-bg);
+  padding: 6px 16px;
+  border-radius: 6px;
   font-weight: 600;
-  color: #333;
+  font-size: 15px;
+  color: var(--text-primary);
+  border: 1px solid var(--pill-border);
+  cursor: pointer;
+  white-space: nowrap;
+  box-shadow: 0 1px 2px var(--header-shadow);
+  min-width: 140px;
+  text-align: center;
+}
+
+.date-display-wrapper:hover .date-display-label {
+  border-color: var(--text-muted);
 }
