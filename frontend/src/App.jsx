@@ -96,6 +96,8 @@ function App() {
   const [lastAbsenceSync, setLastAbsenceSync] = useState(null);
   const [darkMode, setDarkMode] = useState(initialState.darkMode);
   const chartRef = useRef(null);
+  const lastLoadedMonthRef = useRef(null);
+  const lastLoadedYearRef = useRef(null);
 
   // Update URL when state changes
   useEffect(() => {
@@ -178,8 +180,12 @@ function App() {
 
   const loadPublicHolidays = useCallback(async () => {
     if (!isValidDate(selectedDate)) return;
+    const year = selectedDate.getFullYear();
+
+    // Avoid re-fetching if we already have the data for this year
+    if (lastLoadedYearRef.current === year) return;
+
     try {
-      const year = selectedDate.getFullYear();
       // Using Nager.Date API - free and open public holidays API
       // Germany country code: DE
       const response = await fetch(`https://date.nager.at/api/v3/publicholidays/${year}/DE`);
@@ -191,6 +197,7 @@ function App() {
       const holidays = await response.json();
       // Keep all holidays (both national and regional)
       setPublicHolidays(holidays);
+      lastLoadedYearRef.current = year;
     } catch {
       // Don't fail the app if holidays can't be loaded
     }
@@ -203,6 +210,10 @@ function App() {
       // This way, navigating within the same month uses cached data
       const year = selectedDate.getFullYear();
       const month = selectedDate.getMonth(); // 0-indexed
+      const monthKey = `${year}-${month}`;
+
+      // Avoid re-fetching if we already have the data for this month
+      if (lastLoadedMonthRef.current === monthKey) return;
 
       // First day of the month
       const startDate = format(new Date(year, month, 1), 'yyyy-MM-dd');
@@ -221,6 +232,7 @@ function App() {
       const absenceData = data.data || [];
 
       setAbsences(absenceData);
+      lastLoadedMonthRef.current = monthKey;
       if (data.lastUpdated) {
         setLastAbsenceSync(data.lastUpdated);
       }
@@ -464,6 +476,10 @@ function App() {
                   src="/absence_visualizer_icon_light.png"
                   alt="Logo"
                   style={{ width: '28px', height: '28px', borderRadius: '4px' }}
+                  onError={(e) => {
+                    console.error('[Asset] Logo failed to load from /absence_visualizer_icon_light.png');
+                    e.target.style.display = 'none';
+                  }}
                 />
               </div>
               <div className="logo-text">Personio absence visualizer</div>
