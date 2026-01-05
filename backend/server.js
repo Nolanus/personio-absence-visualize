@@ -2,371 +2,477 @@ import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
 import fetch from 'node-fetch';
+import path from 'path';
+import fs from 'fs';
+import { fileURLToPath } from 'url';
+import { createRemoteJWKSet, jwtVerify } from 'jose';
+import cookieParser from 'cookie-parser';
+import { mockEmployees, mockTimeOffTypes, generateMockAbsences } from './mockData.js';
 
-dotenv.config();
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
+dotenv.config({ path: path.join(__dirname, '..', '.env') });
+
+const AZURE_TENANT_ID = process.env.AZURE_TENANT_ID;
+const AZURE_CLIENT_ID = process.env.AZURE_CLIENT_ID;
+const PERSONIO_CLIENT_ID = process.env.PERSONIO_CLIENT_ID;
+const PERSONIO_CLIENT_SECRET = process.env.PERSONIO_CLIENT_SECRET;
+const PORT = process.env.PORT || 8080;
+const PERSONIO_BASE_URL = 'https://api.personio.de/v1';
+const ALLOWED_ORIGIN = process.env.ALLOWED_ORIGIN || null;
+const AUTH_ENABLED = process.env.AUTH_ENABLED !== 'false';
+const COMPANY_NAME = process.env.COMPANY_NAME || 'Organization';
+
+const DEMO_MODE = !PERSONIO_CLIENT_ID || !PERSONIO_CLIENT_SECRET;
+
+if (DEMO_MODE) {
+  console.log('[Startup] PERSONIO_CLIENT_ID or PERSONIO_CLIENT_SECRET not set. Running in DEMO_MODE with mock data.');
+} else if (!AZURE_TENANT_ID || !AZURE_CLIENT_ID) {
+  console.warn(
+    '[Startup] AZURE_TENANT_ID or AZURE_CLIENT_ID not set. Microsoft token validation will fail until configured.',
+  );
+}
 
 const app = express();
-const PORT = process.env.PORT || 3001;
-const PERSONIO_BASE_URL = 'https://api.personio.de/v1';
-const PERSONIO_V2_BASE_URL = process.env.PERSONIO_V2_BASE_URL;
 
-// In-memory cache
-let authToken = null;
-let tokenExpiry = null;
+// In-memory caches
+let personioToken = null;
+let personioTokenExpiresAt = 0; // epoch ms
 const dataCache = new Map();
 
-app.use(cors());
 app.use(express.json());
+app.use(cookieParser());
 
-// Authenticate with Personio API
-async function authenticate() {
-  if (authToken && tokenExpiry && Date.now() < tokenExpiry) {
-    return authToken;
-  }
-
-  try {
-    const response = await fetch(`${PERSONIO_BASE_URL}/auth`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
+// CORS: in production, lock down to a single origin. For same-origin SPA behind this server,
+// CORS is generally not needed, but this is useful for dev and external consumers.
+if (ALLOWED_ORIGIN) {
+  app.use(
+    cors({
+      origin: (origin, callback) => {
+        if (!origin || origin === ALLOWED_ORIGIN) {
+          return callback(null, ALLOWED_ORIGIN);
+        }
+        return callback(new Error('Not allowed by CORS'));
       },
-      body: JSON.stringify({
-        client_id: process.env.PERSONIO_CLIENT_ID,
-        client_secret: process.env.PERSONIO_CLIENT_SECRET,
-      }),
-    });
-
-    const data = await response.json();
-    
-    if (!data.success) {
-      throw new Error('Authentication failed: ' + JSON.stringify(data.error));
-    }
-
-    authToken = data.data.token;
-    // Token typically expires in 1 hour, refresh 5 minutes before
-    tokenExpiry = Date.now() + (55 * 60 * 1000);
-    
-    return authToken;
-  } catch (error) {
-    console.error('Authentication error:', error);
-    throw error;
-  }
+      credentials: true,
+    }),
+  );
+} else {
+  // CORS disabled by default (same-origin only)
+  app.use(cors({ origin: false }));
 }
 
-// Generic Personio API request handler (v1)
-async function personioRequest(endpoint, params = {}) {
-  const token = await authenticate();
-  
-  const queryString = new URLSearchParams(params).toString();
-  const url = `${PERSONIO_BASE_URL}${endpoint}${queryString ? '?' + queryString : ''}`;
-  
-  console.log(`API Request (v1): ${endpoint}${queryString ? '?' + queryString : ''}`);
-  
-  const response = await fetch(url, {
-    headers: {
-      'Authorization': `Bearer ${token}`,
-      'Accept': 'application/json',
-    },
+// -----------------------------
+// Microsoft Entra ID JWT validation
+// -----------------------------
+
+let jwksClient = null;
+if (AZURE_TENANT_ID) {
+  const jwksUri = new URL(
+    `https://login.microsoftonline.com/${AZURE_TENANT_ID}/discovery/v2.0/keys`,
+  );
+  jwksClient = createRemoteJWKSet(jwksUri);
+}
+
+async function verifyMicrosoftToken(token) {
+  if (!jwksClient) {
+    throw new Error('Azure AD configuration missing');
+  }
+
+  const { payload } = await jwtVerify(token, jwksClient, {
+    issuer: [
+      `https://login.microsoftonline.com/${AZURE_TENANT_ID}/v2.0`,
+      `https://sts.windows.net/${AZURE_TENANT_ID}/`,
+    ],
+    audience: AZURE_CLIENT_ID,
   });
 
-  if (!response.ok) {
-    const errorText = await response.text();
-    console.error(`API Error: ${response.status} - ${errorText}`);
-    throw new Error(`Personio API error: ${response.status} - ${errorText}`);
-  }
-
-  const data = await response.json();
-  console.log(`API Response: ${data.success ? 'success' : 'failed'}, records: ${data.data?.length || 0}`);
-  return data;
+  return payload;
 }
 
-// Personio v2 API request handler
-async function personioV2Request(endpoint, params = {}) {
-  const token = await authenticate();
-  
-  const queryString = new URLSearchParams(params).toString();
-  const url = `${PERSONIO_V2_BASE_URL}${endpoint}${queryString ? '?' + queryString : ''}`;
-  
-  console.log(`API Request (v2): ${endpoint}${queryString ? '?' + queryString : ''}`);
-  
-  const response = await fetch(url, {
-    headers: {
-      'Authorization': `Bearer ${token}`,
-      'Accept': 'application/json',
-    },
-  });
+async function authMiddleware(req, res, next) {
+  const authHeader = req.headers.authorization || '';
+  const [scheme, token] = authHeader.split(' ');
 
-  if (!response.ok) {
-    const errorText = await response.text();
-    console.error(`API Error: ${response.status} - ${errorText}`);
-    throw new Error(`Personio API error: ${response.status} - ${errorText}`);
+  if (!token || scheme !== 'Bearer') {
+    if (!AUTH_ENABLED) return next();
+    return res.status(401).json({ error: 'Missing or invalid Authorization header' });
   }
 
-  const data = await response.json();
-  console.log(`API Response: records=${data.data?.length || 0}, cursor=${data.meta?.next_cursor || 'none'}, total=${data.meta?.total || 'unknown'}`);
-  return data;
+  try {
+    const payload = await verifyMicrosoftToken(token);
+    // We rely on Entra ID assignment to restrict which users can obtain tokens.
+    req.user = {
+      oid: payload.oid,
+      upn: payload.preferred_username || payload.upn,
+      name: payload.name,
+    };
+
+    // Set HttpOnly cookie for authenticated session
+    // This allows <img> tags to work without Authorization headers
+    res.cookie('session_oid', payload.oid, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === 'production', // HTTPS only in production
+      sameSite: 'lax',
+      maxAge: 24 * 60 * 60 * 1000, // 24 hours
+    });
+
+    return next();
+  } catch (err) {
+    console.error('[Auth] Microsoft token validation failed:', err.message);
+    return res.status(401).json({ error: 'Invalid or expired token' });
+  }
 }
 
-// Get employees (using v1 API - employees endpoint)
-app.get('/api/employees', async (req, res) => {
-  try {
-    const cacheKey = 'employees';
-    const cached = dataCache.get(cacheKey);
-    
-    // Cache for 5 minutes
-    if (cached && Date.now() - cached.timestamp < 5 * 60 * 1000) {
-      console.log('Returning cached employees');
-      return res.json(cached.data);
-    }
-
-    console.log('\n=== Fetching employees ===');
-    
-    // Use v1 API - simpler and works with standard auth
-    const data = await personioRequest('/company/employees');
-    
-    // Filter to active and onboarding employees (exclude former and paused)
-    const activeEmployees = data.data.filter(employee => {
-      const status = employee.attributes?.status?.value?.toLowerCase();
-      return status === 'active' || status === 'onboarding';
-    });
-    
-    console.log(`Filtered ${data.data.length} → ${activeEmployees.length} active employees`);
-    
-    // Log sample employee structure to debug hierarchy issues
-    if (activeEmployees.length > 0) {
-      const sample = activeEmployees.find(emp => emp.attributes?.supervisor?.value);
-      if (sample) {
-        console.log('Sample employee with supervisor:', JSON.stringify({
-          id: sample.attributes?.id?.value,
-          name: `${sample.attributes?.first_name?.value} ${sample.attributes?.last_name?.value}`,
-          supervisor: sample.attributes?.supervisor?.value,
-          work_schedule: sample.attributes?.work_schedule?.value || sample.attributes?.work_schedule,
-          weekly_working_hours: sample.attributes?.weekly_working_hours?.value
-        }, null, 2));
-      }
-      
-      // Log first employee to see all available attributes
-      console.log('Available employee attributes:', Object.keys(activeEmployees[0].attributes || {}));
-    }
-    
-    const result = {
-      success: true,
-      data: activeEmployees
-    };
-    
-    console.log(`=== Total active employees: ${activeEmployees.length} ===\n`);
-    
-    dataCache.set(cacheKey, {
-      data: result,
-      timestamp: Date.now(),
-    });
-    
-    res.json(result);
-  } catch (error) {
-    console.error('Error fetching employees:', error);
-    res.status(500).json({ error: error.message });
-  }
-});
-
-// Get absence periods with pagination
-app.get('/api/absences', async (req, res) => {
-  try {
-    const { start_date, end_date } = req.query;
-    
-    if (!start_date || !end_date) {
-      return res.status(400).json({ error: 'start_date and end_date are required' });
-    }
-
-    const cacheKey = `absences_${start_date}_${end_date}`;
-    const cached = dataCache.get(cacheKey);
-    
-    // Cache for 5 minutes
-    if (cached && Date.now() - cached.timestamp < 5 * 60 * 1000) {
-      console.log('Returning cached absences');
-      return res.json(cached.data);
-    }
-
-    console.log(`\n=== Fetching absences from ${start_date} to ${end_date} ===`);
-    
-    // Use v1 API for time-offs (this is the correct endpoint for absences)
-    const data = await personioRequest('/company/time-offs', {
-      start_date,
-      end_date
-    });
-    
-    let allAbsences = data.data || [];
-    console.log(`Fetched ${allAbsences.length} absences`);
-    
-    if (allAbsences.length > 0) {
-      // Log sample to understand structure
-      const sample = allAbsences[0];
-      console.log('Sample absence structure:', JSON.stringify({
-        id: sample.attributes?.id?.value,
-        employee: sample.attributes?.employee?.attributes?.email?.value,
-        employeeId: sample.attributes?.employee?.attributes?.id?.value,
-        startDate: sample.attributes?.start_date,
-        endDate: sample.attributes?.end_date,
-        timeOffType: sample.attributes?.time_off_type?.attributes?.name
-      }, null, 2));
-      
-      // Look for the specific date
-      const jan2Absence = allAbsences.find(abs => 
-        abs.attributes?.start_date <= '2026-01-02' && 
-        abs.attributes?.end_date >= '2026-01-02'
-      );
-      
-      if (jan2Absence) {
-        console.log('Found absence on 2026-01-02:', JSON.stringify({
-          employee: jan2Absence.attributes?.employee?.attributes?.email?.value,
-          employeeId: jan2Absence.attributes?.employee?.attributes?.id?.value,
-          startDate: jan2Absence.attributes?.start_date,
-          endDate: jan2Absence.attributes?.end_date
-        }, null, 2));
-      } else {
-        console.log('No absence found for 2026-01-02 in date range');
-      }
-    }
-    
-    const result = {
-      success: true,
-      data: allAbsences
-    };
-    
-    console.log(`\n=== Total absences returned: ${allAbsences.length} ===\n`);
-    
-    dataCache.set(cacheKey, {
-      data: result,
-      timestamp: Date.now(),
-    });
-    
-    res.json(result);
-  } catch (error) {
-    console.error('\n!!! Error fetching absences:', error.message);
-    console.error('Stack:', error.stack);
-    res.status(500).json({ error: error.message });
-  }
-});
-
-// Get time-off types (to identify sick leave vs other absences)
-app.get('/api/time-off-types', async (req, res) => {
-  try {
-    const cacheKey = 'time_off_types';
-    const cached = dataCache.get(cacheKey);
-    
-    // Cache for 1 hour
-    if (cached && Date.now() - cached.timestamp < 60 * 60 * 1000) {
-      return res.json(cached.data);
-    }
-
-    const data = await personioRequest('/company/time-off-types');
-    
-    dataCache.set(cacheKey, {
-      data,
-      timestamp: Date.now(),
-    });
-    
-    res.json(data);
-  } catch (error) {
-    console.error('Error fetching time-off types:', error);
-    res.status(500).json({ error: error.message });
-  }
-});
-
-// Get employee profile picture
+// Employee profile picture proxy (cookie-authenticated for <img> tag compatibility)
+// Requires session_oid cookie set by authMiddleware
 app.get('/api/profile-picture/:employeeId', async (req, res) => {
+  const { employeeId } = req.params;
   try {
-    const { employeeId } = req.params;
-    const width = req.query.width || 75;
-    
-    const token = await authenticate();
-    const url = `${PERSONIO_BASE_URL}/company/employees/${employeeId}/profile-picture/${width}`;
-    
+    // Check for session cookie
+    const sessionOid = req.cookies.session_oid;
+    if (!sessionOid && AUTH_ENABLED) {
+      return res.status(401).send('Unauthorized - No session cookie');
+    }
+
+    if (DEMO_MODE) {
+      // In demo mode, return a UI-Avatar for everyone
+      return res.redirect(`https://ui-avatars.com/api/?name=${employeeId}&background=random`);
+    }
+
+    // Check cache first (24-hour TTL to preserve API quota)
+    const cacheKey = `profile_picture_${employeeId}`;
+    const cached = dataCache.get(cacheKey);
+
+    if (cached) {
+      const age = Date.now() - cached.timestamp;
+
+      // Handle cached successes
+      if (!cached.isError && age < 24 * 60 * 60 * 1000) {
+        res.set('Content-Type', 'image/png');
+        res.set('Cache-Control', 'public, max-age=86400');
+        return res.send(cached.data);
+      }
+
+      // Handle cached 404s (Missing images) - cache for 24 hours per user request
+      if (cached.status === 404 && age < 24 * 60 * 60 * 1000) {
+        return res.status(404).send('Image not found (cached)');
+      }
+
+      // Handle cached 429s (Rate limits) - cache for 2 minutes as backoff
+      if (cached.status === 429 && age < 2 * 60 * 1000) {
+        return res.status(429).send('Too many requests (backoff)');
+      }
+    }
+
+    const token = await getPersonioAccessToken();
+    // Use the URL format from the profile_picture attribute (no width parameter)
+    const url = `${PERSONIO_BASE_URL}/company/employees/${employeeId}/profile-picture`;
+
     const response = await fetch(url, {
       headers: {
-        'Authorization': `Bearer ${token}`,
-        'Accept': 'image/png',
+        Authorization: `Bearer ${token}`,
+        Accept: 'image/png',
       },
     });
 
     if (!response.ok) {
-      // No profile picture available, return 404
-      return res.status(404).json({ error: 'Profile picture not found' });
+      console.error(
+        `[API] Profile picture fetch failed for ${employeeId}. Status: ${response.status} ${response.statusText}`,
+      );
+
+      // Implement negative caching for failures
+      const status = response.status;
+      if (status === 404 || status === 429) {
+        dataCache.set(cacheKey, {
+          isError: true,
+          status: status,
+          timestamp: Date.now(),
+        });
+      }
+
+      return res.status(status).send(status === 404 ? 'Image not found' : 'Rate limited');
     }
 
     const imageBuffer = await response.arrayBuffer();
     const buffer = Buffer.from(imageBuffer);
-    
+
+    // Cache the image for 24 hours
+    dataCache.set(cacheKey, {
+      data: buffer,
+      timestamp: Date.now(),
+      isError: false,
+    });
+
     res.set('Content-Type', 'image/png');
-    res.set('Cache-Control', 'public, max-age=3600'); // Cache for 1 hour
+    res.set('Cache-Control', 'public, max-age=86400'); // 24 hours
     res.send(buffer);
   } catch (error) {
-    console.error('Error fetching profile picture:', error);
-    res.status(500).json({ error: error.message });
+    console.error('[API] /api/profile-picture failed:', error.message);
+    return res.status(500).send('Server error');
   }
 });
 
-// Debug endpoint to test API endpoints
-app.get('/api/absences/debug', async (req, res) => {
+// Logout endpoint (unauthenticated) - clears session cookie
+app.post('/api/logout', (req, res) => {
+  // Clear the session cookie
+  res.clearCookie('session_oid', {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === 'production',
+    sameSite: 'lax',
+  });
+
+  res.json({ success: true, message: 'Logged out successfully' });
+});
+
+// Apply auth to all API routes
+app.use('/api', authMiddleware);
+
+// -----------------------------
+// Personio API integration with token caching
+// -----------------------------
+
+async function getPersonioAccessToken() {
+  const now = Date.now();
+  if (personioToken && personioTokenExpiresAt > now) {
+    return personioToken;
+  }
+
+  if (!PERSONIO_CLIENT_ID || !PERSONIO_CLIENT_SECRET) {
+    throw new Error('Personio credentials not configured');
+  }
+
+  const body = new URLSearchParams({
+    client_id: PERSONIO_CLIENT_ID,
+    client_secret: PERSONIO_CLIENT_SECRET,
+  });
+
+  const response = await fetch(`${PERSONIO_BASE_URL}/auth`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/x-www-form-urlencoded',
+      Accept: 'application/json',
+    },
+    body,
+  });
+
+  if (!response.ok) {
+    console.error('[Personio] Auth failed with status', response.status);
+    // Intentionally do NOT log credentials or full response body to avoid leaking secrets.
+    throw new Error(`Personio auth failed with status ${response.status}`);
+  }
+
+  const data = await response.json();
+  const token = data?.data?.token || data?.token || data?.access_token;
+
+  if (!token) {
+    throw new Error('Personio auth response did not contain a token');
+  }
+
+  personioToken = token;
+  // Personio tokens are stable for 24h; cache for slightly less to be safe.
+  personioTokenExpiresAt = now + 23 * 60 * 60 * 1000;
+
+  return personioToken;
+}
+
+async function personioRequest(endpoint, params = {}) {
+  const token = await getPersonioAccessToken();
+
+  const queryString = new URLSearchParams(params).toString();
+  const url = `${PERSONIO_BASE_URL}${endpoint}${queryString ? `?${queryString}` : ''}`;
+
+  const response = await fetch(url, {
+    headers: {
+      Authorization: `Bearer ${token}`,
+      Accept: 'application/json',
+    },
+  });
+
+  if (!response.ok) {
+    const errorText = await response.text();
+    console.error(`[Personio] API Error: ${response.status}`);
+    throw new Error(`Personio API error: ${response.status} - ${errorText}`);
+  }
+
+  const data = await response.json();
+  return data;
+}
+
+// -----------------------------
+// API Routes
+// -----------------------------
+
+// Employees
+app.get('/api/employees', async (req, res) => {
+  if (DEMO_MODE) return res.json(mockEmployees);
   try {
-    const token = await authenticate();
-    
-    // Test both v1 and v2 endpoints
-    const tests = [
-      { version: 'v1', base: PERSONIO_BASE_URL, endpoint: '/company/employees' },
-      { version: 'v2', base: PERSONIO_V2_BASE_URL, endpoint: '/persons' },
-      { version: 'v1', base: PERSONIO_BASE_URL, endpoint: '/company/absence-periods' },
-      { version: 'v1', base: PERSONIO_BASE_URL, endpoint: '/company/time-offs' },
-      { version: 'v2', base: PERSONIO_V2_BASE_URL, endpoint: '/absence-periods' },
-    ];
-    
-    const results = {};
-    
-    for (const test of tests) {
-      const testUrl = `${test.base}${test.endpoint}`;
-      const testKey = `${test.version}${test.endpoint}`;
-      console.log(`\nTesting: ${testUrl}`);
-      
-      try {
-        const response = await fetch(testUrl, {
-          headers: {
-            'Authorization': `Bearer ${token}`,
-            'Accept': 'application/json',
-          },
-        });
-        
-        const data = await response.json();
-        results[testKey] = {
-          url: testUrl,
-          status: response.status,
-          success: data.success,
-          recordCount: data.data?.length || 0,
-          meta: data.meta || null,
-          sample: data.data?.[0] ? {
-            id: data.data[0].id,
-            type: data.data[0].type,
-            hasAttributes: !!data.data[0].attributes
-          } : null
-        };
-        console.log(`  Status: ${response.status}, Records: ${data.data?.length || 0}`);
-      } catch (error) {
-        results[testKey] = { url: testUrl, error: error.message };
-        console.log(`  Error: ${error.message}`);
-      }
+    const cacheKey = 'employees';
+    const cached = dataCache.get(cacheKey);
+
+    // Cache for 5 minutes
+    if (cached && Date.now() - cached.timestamp < 5 * 60 * 1000) {
+      return res.json(cached.data);
     }
-    
-    res.json(results);
+
+    const data = await personioRequest('/company/employees');
+    const lastUpdated = Date.now();
+
+    // Filter to active and onboarding employees (exclude former and paused)
+    const activeEmployees = (data.data || []).filter((employee) => {
+      const status = employee.attributes?.status?.value?.toLowerCase();
+      return status === 'active' || status === 'onboarding';
+    });
+
+    const result = {
+      success: true,
+      data: activeEmployees,
+      lastUpdated,
+    };
+
+    dataCache.set(cacheKey, {
+      data: result,
+      timestamp: Date.now(),
+    });
+
+    return res.json(result);
   } catch (error) {
-    console.error('Debug error:', error);
-    res.status(500).json({ error: error.message });
+    console.error('[API] /api/employees failed:', error.message);
+    return res.status(500).json({ error: 'Failed to fetch employees from Personio' });
   }
 });
 
-// Health check
+// Absences (time-offs)
+app.get('/api/absences', async (req, res) => {
+  const { start_date, end_date } = req.query;
+
+  if (!start_date || !end_date) {
+    return res
+      .status(400)
+      .json({ error: 'start_date and end_date query parameters are required (YYYY-MM-DD)' });
+  }
+
+  if (DEMO_MODE) return res.json(generateMockAbsences(start_date));
+
+  try {
+
+
+    const cacheKey = `absences_${start_date}_${end_date}`;
+    const cached = dataCache.get(cacheKey);
+
+    // Cache for 30 minutes
+    if (cached && Date.now() - cached.timestamp < 30 * 60 * 1000) {
+      return res.json(cached.data);
+    }
+
+    const data = await personioRequest('/company/time-offs', {
+      start_date,
+      end_date,
+    });
+    const lastUpdated = Date.now();
+
+    const result = {
+      success: true,
+      data: data.data || [],
+      lastUpdated,
+    };
+
+    dataCache.set(cacheKey, {
+      data: result,
+      timestamp: Date.now(),
+    });
+
+    return res.json(result);
+  } catch (error) {
+    console.error('[API] /api/absences failed:', error.message);
+    return res.status(500).json({ error: 'Failed to fetch absences from Personio' });
+  }
+});
+
+// Time-off types
+app.get('/api/time-off-types', async (req, res) => {
+  if (DEMO_MODE) return res.json(mockTimeOffTypes);
+  try {
+    const cacheKey = 'time_off_types';
+    const cached = dataCache.get(cacheKey);
+
+    // Cache for 24 hours
+    if (cached && Date.now() - cached.timestamp < 24 * 60 * 60 * 1000) {
+      return res.json(cached.data);
+    }
+
+    const data = await personioRequest('/company/time-off-types');
+    const lastUpdated = Date.now();
+
+    const result = {
+      success: true,
+      data: data.data || [],
+      lastUpdated,
+    };
+
+    dataCache.set(cacheKey, {
+      data: result,
+      timestamp: lastUpdated,
+    });
+
+    return res.json(result);
+  } catch (error) {
+    console.error('[API] /api/time-off-types failed:', error.message);
+    return res.status(500).json({ error: 'Failed to fetch time-off types from Personio' });
+  }
+});
+
+// Health check (unauthenticated) for container/platform probes
 app.get('/health', (req, res) => {
   res.json({ status: 'ok' });
 });
 
-app.listen(PORT, () => {
-  console.log(`Backend server running on http://localhost:${PORT}`);
-  console.log('Make sure to set PERSONIO_CLIENT_ID and PERSONIO_CLIENT_SECRET in .env file');
+// -----------------------------
+// Static file serving for React SPA
+// -----------------------------
+
+const publicDir = path.join(__dirname, '..', 'public');
+app.use(express.static(publicDir, { index: false }));
+
+// Preload index.html and inject public Azure config so the SPA can read it at runtime
+let indexHtml = null;
+const indexPath = path.join(publicDir, 'index.html');
+try {
+  if (fs.existsSync(indexPath)) {
+    const rawHtml = fs.readFileSync(indexPath, 'utf8');
+    const config = {
+      azureClientId: AZURE_CLIENT_ID || null,
+      azureTenantId: AZURE_TENANT_ID || null,
+      authEnabled: AUTH_ENABLED,
+      companyName: COMPANY_NAME,
+    };
+    const configScript = `<script>window.__SCHEDULE_VIEWER_CONFIG__ = ${JSON.stringify(
+      config,
+    )};</script>`;
+    indexHtml = rawHtml.replace('</head>', `  ${configScript}\n</head>`);
+  }
+} catch (err) {
+  console.warn('[Startup] Failed to preload index.html for config injection:', err.message);
+}
+
+// Catch-all route to support client-side routing (React Router-style)
+app.get('*', (req, res, next) => {
+  if (req.path.startsWith('/api')) {
+    return next();
+  }
+
+  if (indexHtml) {
+    return res.send(indexHtml);
+  }
+
+  return res.sendFile(indexPath);
 });
+
+if (process.argv[1] === __filename) {
+  app.listen(PORT, () => {
+    console.log(`[Startup] Server listening on port ${PORT}`);
+  });
+}
+
+export default app;
