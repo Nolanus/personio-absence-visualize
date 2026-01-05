@@ -133,25 +133,7 @@ function App() {
     return () => document.removeEventListener('fullscreenchange', handleFullscreenChange);
   }, []);
 
-  // Load initial data once we have an access token (or immediately if auth is disabled)
-  useEffect(() => {
-    if (AUTH_ENABLED && !accessToken) return;
-    loadData();
-    loadPublicHolidays();
-  }, [accessToken, loadData, loadPublicHolidays]);
 
-  // Load absences when date changes (or immediately if auth is disabled)
-  useEffect(() => {
-    if (employees.length > 0 && (!AUTH_ENABLED || accessToken)) {
-      loadAbsences();
-    }
-  }, [selectedDate, employees, accessToken, loadAbsences]);
-
-  // Reload holidays when year changes
-  useEffect(() => {
-    if (!isValidDate(selectedDate)) return;
-    loadPublicHolidays();
-  }, [selectedDate, loadPublicHolidays]);
 
   const authorizedFetch = useCallback(
     (url, options = {}) => {
@@ -173,30 +155,6 @@ function App() {
 
   const [profilePictures, setProfilePictures] = useState({});
   const failedImagesRef = useRef(new Set());
-
-  const loadData = useCallback(async () => {
-    try {
-      // Load employees and time-off types in parallel
-      const employeesRes = await authorizedFetch(`${API_BASE_URL}/employees`);
-
-      if (!employeesRes.ok) {
-        throw new Error('Failed to fetch data');
-      }
-
-      const employeesData = await employeesRes.json();
-      const loadedEmployees = employeesData.data || [];
-
-      setEmployees(loadedEmployees);
-
-      // Load absences for initial date range
-      await loadAbsences();
-
-      // Load profile pictures for all employees
-      loadProfilePictures(loadedEmployees);
-    } catch (err) {
-      console.error(err.message);
-    }
-  }, [authorizedFetch, loadAbsences, loadProfilePictures]);
 
   const loadProfilePictures = useCallback(
     async (employeeList) => {
@@ -271,9 +229,52 @@ function App() {
     }
   }, [selectedDate, authorizedFetch]);
 
+  const loadData = useCallback(async () => {
+    try {
+      // Load employees and time-off types in parallel
+      const employeesRes = await authorizedFetch(`${API_BASE_URL}/employees`);
+
+      if (!employeesRes.ok) {
+        throw new Error('Failed to fetch data');
+      }
+
+      const employeesData = await employeesRes.json();
+      const loadedEmployees = employeesData.data || [];
+
+      setEmployees(loadedEmployees);
+
+      // Load absences for initial date range
+      await loadAbsences();
+
+      // Load profile pictures for all employees
+      loadProfilePictures(loadedEmployees);
+    } catch (err) {
+      console.error(err.message);
+    }
+  }, [authorizedFetch, loadAbsences, loadProfilePictures]);
 
 
-  // Get employee status for selected date
+  // Load initial data once we have an access token (or immediately if auth is disabled)
+  useEffect(() => {
+    if (AUTH_ENABLED && !accessToken) return;
+    loadData();
+    loadPublicHolidays();
+  }, [accessToken, loadData, loadPublicHolidays]);
+
+  // Load absences when date changes (or immediately if auth is disabled)
+  useEffect(() => {
+    if (employees.length > 0 && (!AUTH_ENABLED || accessToken)) {
+      loadAbsences();
+    }
+  }, [selectedDate, employees, accessToken, loadAbsences]);
+
+  // Reload holidays when year changes
+  useEffect(() => {
+    if (!isValidDate(selectedDate)) return;
+    loadPublicHolidays();
+  }, [selectedDate, loadPublicHolidays]);
+
+
   const getEmployeeStatus = useCallback(
     (employeeId) => {
       if (!isValidDate(selectedDate)) return { status: 'loading', label: 'Loading...' };
