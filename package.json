@@ -7,9 +7,15 @@
     "start": "concurrently \"npm run start:backend\" \"npm run start:frontend\"",
     "start:backend": "cd backend && npm start",
     "start:frontend": "cd frontend && npm run dev",
-    "install:all": "npm install && cd backend && npm install && cd ../frontend && npm install"
+    "install:all": "npm install && cd backend && npm install && cd ../frontend && npm install",
+    "lint": "npm run lint:backend && npm run lint:frontend",
+    "lint:backend": "cd backend && npm run lint",
+    "lint:frontend": "cd frontend && npm run lint",
+    "format": "prettier --write ."
   },
   "devDependencies": {
-    "concurrently": "^8.2.2"
+    "concurrently": "^8.2.2",
+    "prettier": "^3.7.4",
+    "puppeteer": "^24.34.0"
   }
 }
