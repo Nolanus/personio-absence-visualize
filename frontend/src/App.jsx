@@ -12,6 +12,26 @@ const RUNTIME_CONFIG = window.__SCHEDULE_VIEWER_CONFIG__ || {};
 const AUTH_ENABLED = RUNTIME_CONFIG.authEnabled !== false;
 const COMPANY_NAME = RUNTIME_CONFIG.companyName || 'Organization';
 
+// Mapping from Personio state names to API county codes
+const stateToCountyCode = {
+  'Baden-Wuerttemberg': 'DE-BW',
+  Bayern: 'DE-BY',
+  Berlin: 'DE-BE',
+  Brandenburg: 'DE-BB',
+  Bremen: 'DE-HB',
+  Hamburg: 'DE-HH',
+  Hessen: 'DE-HE',
+  'Mecklenburg-Vorpommern': 'DE-MV',
+  Niedersachsen: 'DE-NI',
+  NRW: 'DE-NW',
+  'Rheinland-Pfalz': 'DE-RP',
+  Saarland: 'DE-SL',
+  Sachsen: 'DE-SN',
+  'Sachsen-Anhalt': 'DE-ST',
+  'Schleswig-Holstein': 'DE-SH',
+  Thueringen: 'DE-TH',
+};
+
 function App() {
   // Initialize state from URL params
   const getInitialState = () => {
@@ -36,10 +56,10 @@ function App() {
   // Helper to check if date is valid
   const isValidDate = (date) => date instanceof Date && !isNaN(date);
 
-  const safeFormat = (date, formatStr) => {
+  const safeFormat = useCallback((date, formatStr) => {
     if (!isValidDate(date)) return 'Invalid Date';
     return format(date, formatStr);
-  };
+  }, []);
 
   const { instance, accounts } = useMsal();
   const [accessToken, setAccessToken] = useState(null);
@@ -90,7 +110,7 @@ function App() {
 
     // Also save to localStorage for persistence
     localStorage.setItem('theme', darkMode ? 'dark' : 'light');
-  }, [selectedDate, progressBarMode, darkMode]);
+  }, [selectedDate, progressBarMode, darkMode, safeFormat]);
 
   // Fullscreen handler
   const toggleFullscreen = () => {
@@ -118,20 +138,20 @@ function App() {
     if (AUTH_ENABLED && !accessToken) return;
     loadData();
     loadPublicHolidays();
-  }, [accessToken]);
+  }, [accessToken, loadData, loadPublicHolidays]);
 
   // Load absences when date changes (or immediately if auth is disabled)
   useEffect(() => {
     if (employees.length > 0 && (!AUTH_ENABLED || accessToken)) {
       loadAbsences();
     }
-  }, [selectedDate, employees, accessToken]);
+  }, [selectedDate, employees, accessToken, loadAbsences]);
 
   // Reload holidays when year changes
   useEffect(() => {
     if (!isValidDate(selectedDate)) return;
     loadPublicHolidays();
-  }, [selectedDate.getFullYear()]);
+  }, [selectedDate, loadPublicHolidays]);
 
   const authorizedFetch = useCallback(
     (url, options = {}) => {
@@ -154,7 +174,7 @@ function App() {
   const [profilePictures, setProfilePictures] = useState({});
   const failedImagesRef = useRef(new Set());
 
-  async function loadData() {
+  const loadData = useCallback(async () => {
     try {
       // Load employees and time-off types in parallel
       const employeesRes = await authorizedFetch(`${API_BASE_URL}/employees`);
@@ -176,7 +196,7 @@ function App() {
     } catch (err) {
       console.error(err.message);
     }
-  }
+  }, [authorizedFetch, loadAbsences, loadProfilePictures]);
 
   const loadProfilePictures = useCallback(
     async (employeeList) => {
@@ -198,7 +218,7 @@ function App() {
     [profilePictures],
   );
 
-  async function loadPublicHolidays() {
+  const loadPublicHolidays = useCallback(async () => {
     if (!isValidDate(selectedDate)) return;
     try {
       const year = selectedDate.getFullYear();
@@ -213,12 +233,12 @@ function App() {
       const holidays = await response.json();
       // Keep all holidays (both national and regional)
       setPublicHolidays(holidays);
-    } catch (_err) {
+    } catch {
       // Don't fail the app if holidays can't be loaded
     }
-  }
+  }, [selectedDate]);
 
-  async function loadAbsences() {
+  const loadAbsences = useCallback(async () => {
     if (!isValidDate(selectedDate)) return;
     try {
       // Request the full month containing the selected date for efficient caching
@@ -246,30 +266,12 @@ function App() {
       if (data.lastUpdated) {
         setLastAbsenceSync(data.lastUpdated);
       }
-    } catch (_err) {
+    } catch {
       // Error handling - silently fail to avoid disrupting UI
     }
-  }
+  }, [selectedDate, authorizedFetch]);
 
-  // Mapping from Personio state names to API county codes
-  const stateToCountyCode = {
-    'Baden-Wuerttemberg': 'DE-BW',
-    Bayern: 'DE-BY',
-    Berlin: 'DE-BE',
-    Brandenburg: 'DE-BB',
-    Bremen: 'DE-HB',
-    Hamburg: 'DE-HH',
-    Hessen: 'DE-HE',
-    'Mecklenburg-Vorpommern': 'DE-MV',
-    Niedersachsen: 'DE-NI',
-    NRW: 'DE-NW',
-    'Rheinland-Pfalz': 'DE-RP',
-    Saarland: 'DE-SL',
-    Sachsen: 'DE-SN',
-    'Sachsen-Anhalt': 'DE-ST',
-    'Schleswig-Holstein': 'DE-SH',
-    Thueringen: 'DE-TH',
-  };
+
 
   // Get employee status for selected date
   const getEmployeeStatus = useCallback(
@@ -295,13 +297,11 @@ function App() {
 
       // Base working/non-working status
       let baseStatus = 'available';
-      let baseReason = 'available';
       let baseLabel = 'Available';
 
       // Check if it's a public holiday
       if (isPublicHoliday) {
         baseStatus = 'non-working-day';
-        baseReason = 'public-holiday';
         baseLabel = publicHoliday.name;
       } else if (employee) {
         // Check work schedule
@@ -320,7 +320,6 @@ function App() {
           if (hoursForDay === '00:00' || hoursForDay === 0 || !hoursForDay) {
             const isWeekend = dayOfWeek === 0 || dayOfWeek === 6;
             baseStatus = 'non-working-day';
-            baseReason = isWeekend ? 'weekend' : 'off-day';
             baseLabel = isWeekend ? 'Weekend' : 'Off Day';
           }
         }
@@ -329,8 +328,6 @@ function App() {
       // Initialize AM/PM statuses with base status
       let amStatus = baseStatus;
       let pmStatus = baseStatus;
-      let amReason = baseReason;
-      let pmReason = baseReason;
 
 
       // Filter all absences for this employee on this date
@@ -367,7 +364,6 @@ function App() {
           absenceTypeName.includes('illness');
 
         const typeStatus = isSick ? 'sick' : 'absent';
-        const typeReason = isSick ? 'sick-leave' : 'absence';
 
         // Determine segments affected by this record
         let affectsAM = true;
@@ -387,11 +383,9 @@ function App() {
         // Apply precedence
         if (affectsAM && getStatusWeight(typeStatus) < getStatusWeight(amStatus)) {
           amStatus = typeStatus;
-          amReason = typeReason;
         }
         if (affectsPM && getStatusWeight(typeStatus) < getStatusWeight(pmStatus)) {
           pmStatus = typeStatus;
-          pmReason = typeReason;
         }
       });
 
@@ -433,7 +427,7 @@ function App() {
         absentHalf: amStatus !== baseStatus ? 'first' : 'second', // Used by OrgChart for split detection
       };
     },
-    [selectedDate, absences, publicHolidays, employees]
+    [selectedDate, absences, publicHolidays, employees, safeFormat],
   );
 
   const Dashboard = (

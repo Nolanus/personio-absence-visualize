@@ -397,7 +397,7 @@ const OrgChart = forwardRef(
           .compactMarginBetween(() => 30)
           .compactMarginPair(() => 30)
           .neighbourMargin(() => 25, 25)
-          .linkUpdate(function (d) {
+          .linkUpdate(function (_d) {
             d3.select(this)
               .attr('stroke', isDarkMode ? '#334155' : '#e5e7eb')
               .attr('stroke-width', 1.5);
@@ -415,7 +415,7 @@ const OrgChart = forwardRef(
             const personioUrl = `https://united-workspace.app.personio.com/time-off/employee/${employeeId}/monthly?month=${month}&year=${year}`;
             window.open(personioUrl, '_blank');
           })
-          .buttonContent(({ node, state }) => {
+          .buttonContent(({ node, state: _state }) => {
             const hasChildren = node.children || node._children;
             // In D3, if node.children is present, it's expanded. If node._children is present, it's collapsed.
             const isExpanded = !!node.children;
@@ -727,7 +727,7 @@ const OrgChart = forwardRef(
 
       /* Update link colors if they change */
       chart
-        .linkUpdate(function (d) {
+        .linkUpdate(function (_d) {
           d3.select(this)
             .attr('stroke', isDarkMode ? '#4b5563' : '#d1d5db')
             .attr('stroke-width', 1.5);
@@ -739,10 +739,12 @@ const OrgChart = forwardRef(
       progressBarMode,
       layout,
       profilePictures,
+      selectedDate,
+      isDarkMode,
+      companyName,
       activeEmployees,
       childrenMap,
       chartData,
-      isDarkMode,
     ]);
 
     if (!employees || employees.length === 0) {

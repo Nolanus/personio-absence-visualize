@@ -8,9 +8,9 @@
     "start:backend": "cd backend && npm start",
     "start:frontend": "cd frontend && npm run dev",
     "install:all": "npm install && cd backend && npm install && cd ../frontend && npm install",
-    "lint": "npm run lint:backend && npm run lint:frontend",
-    "lint:backend": "cd backend && npm run lint",
-    "lint:frontend": "cd frontend && npm run lint",
+    "lint": "concurrently \"npm run lint:backend\" \"npm run lint:frontend\"",
+    "lint:backend": "cd backend && npm run lint -- --max-warnings 0",
+    "lint:frontend": "cd frontend && npm run lint -- --max-warnings 0",
     "format": "prettier --write ."
   },
   "devDependencies": {
