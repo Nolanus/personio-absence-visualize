@@ -31,15 +31,13 @@ function DatePicker({ selectedDate, onDateChange }) {
       if (dateInputRef.current) {
         dateInputRef.current.showPicker();
       }
-    } catch (err) {
+    } catch (_err) {
       // Fallback or ignore if not supported (e.g. Safari < 16)
       // In that case, the htmlFor behavior usually handles focus
     }
   };
 
-  const handleToday = () => {
-    onDateChange(new Date());
-  };
+
 
   return (
     <div className="date-picker-simple">

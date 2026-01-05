@@ -52,8 +52,7 @@ const OrgChart = forwardRef(
         // Create a Set of valid employee IDs for quick lookup
         const valid = new Set(active.map((emp) => String(emp.attributes?.id?.value)));
 
-        // Track employees without valid parents (will be roots)
-        const roots = [];
+
 
         // Build a map of parent -> children for subordinate counting
         const map = new Map();
@@ -382,8 +381,7 @@ const OrgChart = forwardRef(
       // Set layout
       chart.layout(layout === 'left' ? 'left' : 'top');
 
-      // Link colors
-      const linkColor = isDarkMode ? '#334155' : '#e5e7eb';
+
 
       // Update chart background and links
       if (chartRef.current) {
@@ -603,8 +601,7 @@ const OrgChart = forwardRef(
         };
         const statusIcon = statusIcons[d.data.status] || '•';
 
-        const availableColor = '#10b981';
-        const absentColor = '#ef4444';
+
 
         let nodeStyleProperties = `
         width: 190px;
@@ -752,7 +749,7 @@ const OrgChart = forwardRef(
       return (
         <div className="org-chart-empty">
           <p>No active employees found.</p>
-          <p>Make sure employees are marked as "active" in Personio.</p>
+          <p>Make sure employees are marked as &quot;active&quot; in Personio.</p>
         </div>
       );
     }

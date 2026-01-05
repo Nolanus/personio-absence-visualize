@@ -30,7 +30,8 @@ describe('App Component', () => {
         window.__SCHEDULE_VIEWER_CONFIG__ = { authEnabled: false };
 
         // Mock fetch
-        global.fetch = vi.fn((url) => {
+        // Mock fetch
+        const mockFetch = vi.fn((url) => {
             if (url.includes('/api/employees')) {
                 return Promise.resolve({
                     ok: true,
@@ -45,6 +46,7 @@ describe('App Component', () => {
             }
             return Promise.resolve({ ok: true, json: () => Promise.resolve({}) });
         });
+        vi.stubGlobal('fetch', mockFetch);
     });
 
     it('renders without crashing', async () => {

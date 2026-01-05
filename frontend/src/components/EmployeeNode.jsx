@@ -1,8 +1,7 @@
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import './EmployeeNode.css';
 
 function EmployeeNode({ employee, status }) {
-  const [profilePicture, setProfilePicture] = useState(null);
   const [imageError, setImageError] = useState(false);
 
   const employeeId = employee.attributes?.id?.value;
@@ -13,17 +12,12 @@ function EmployeeNode({ employee, status }) {
   // Get initials for fallback
   const initials = `${firstName.charAt(0)}${lastName.charAt(0)}`.toUpperCase();
 
-  useEffect(() => {
-    // Try to load profile picture (served by the same origin backend)
-    if (employeeId && !imageError) {
-      const imageUrl = `/api/profile-picture/${employeeId}?width=75`;
-      setProfilePicture(imageUrl);
-    }
-  }, [employeeId, imageError]);
+  // Try to load profile picture (served by the same origin backend)
+  const profilePicture =
+    employeeId && !imageError ? `/api/profile-picture/${employeeId}?width=75` : null;
 
   const handleImageError = () => {
     setImageError(true);
-    setProfilePicture(null);
   };
 
   const statusLabels = {

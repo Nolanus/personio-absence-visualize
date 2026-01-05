@@ -1,11 +1,10 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { format, addDays, subDays } from 'date-fns';
+import { format } from 'date-fns';
 import OrgChart from './components/OrgChart';
 import DatePicker from './components/DatePicker';
 import './App.css';
 import { AuthenticatedTemplate, UnauthenticatedTemplate, useMsal } from '@azure/msal-react';
-import { InteractionStatus, InteractionType } from '@azure/msal-browser';
-import { msalInstance, loginRequest } from './authConfig';
+import { loginRequest } from './authConfig';
 
 // When running behind the Node.js server and Docker, the frontend and API share the same origin.
 const API_BASE_URL = '/api';
@@ -67,12 +66,9 @@ function App() {
 
   const [employees, setEmployees] = useState([]);
   const [absences, setAbsences] = useState([]);
-  const [timeOffTypes, setTimeOffTypes] = useState([]);
   const [selectedDate, setSelectedDate] = useState(
     isValidDate(initialState.date) ? initialState.date : new Date(),
   );
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState(null);
   const [publicHolidays, setPublicHolidays] = useState([]);
   const [progressBarMode, setProgressBarMode] = useState(initialState.mode);
   const [isFullscreen, setIsFullscreen] = useState(false);
@@ -156,30 +152,21 @@ function App() {
   );
 
   const [profilePictures, setProfilePictures] = useState({});
-  const loadingImagesRef = useRef(new Set());
   const failedImagesRef = useRef(new Set());
 
   async function loadData() {
     try {
-      setLoading(true);
-      setError(null);
-
       // Load employees and time-off types in parallel
-      const [employeesRes, timeOffTypesRes] = await Promise.all([
-        authorizedFetch(`${API_BASE_URL}/employees`),
-        authorizedFetch(`${API_BASE_URL}/time-off-types`),
-      ]);
+      const employeesRes = await authorizedFetch(`${API_BASE_URL}/employees`);
 
-      if (!employeesRes.ok || !timeOffTypesRes.ok) {
+      if (!employeesRes.ok) {
         throw new Error('Failed to fetch data');
       }
 
       const employeesData = await employeesRes.json();
-      const timeOffTypesData = await timeOffTypesRes.json();
       const loadedEmployees = employeesData.data || [];
 
       setEmployees(loadedEmployees);
-      setTimeOffTypes(timeOffTypesData.data || []);
 
       // Load absences for initial date range
       await loadAbsences();
@@ -187,9 +174,7 @@ function App() {
       // Load profile pictures for all employees
       loadProfilePictures(loadedEmployees);
     } catch (err) {
-      setError(err.message);
-    } finally {
-      setLoading(false);
+      console.error(err.message);
     }
   }
 
@@ -228,7 +213,7 @@ function App() {
       const holidays = await response.json();
       // Keep all holidays (both national and regional)
       setPublicHolidays(holidays);
-    } catch (err) {
+    } catch (_err) {
       // Don't fail the app if holidays can't be loaded
     }
   }
@@ -261,7 +246,7 @@ function App() {
       if (data.lastUpdated) {
         setLastAbsenceSync(data.lastUpdated);
       }
-    } catch (err) {
+    } catch (_err) {
       // Error handling - silently fail to avoid disrupting UI
     }
   }
@@ -346,8 +331,7 @@ function App() {
       let pmStatus = baseStatus;
       let amReason = baseReason;
       let pmReason = baseReason;
-      let amLabel = baseLabel;
-      let pmLabel = baseLabel;
+
 
       // Filter all absences for this employee on this date
       const relevantAbsences = absences.filter((abs) => {
@@ -432,8 +416,7 @@ function App() {
         // User said: "label should be absence, as absence should always take precedence"
         // If mixed with working, use "½ Absent" or "½ Sick"
         // If mixed with each other (e.g. AM Absent, PM Sick), use "Absent" (due to precedence)
-        const absHalf = amStatus === 'absent' || amStatus === 'sick' ? 'AM' : 'PM';
-        const activeStatus = amStatus === 'absent' || amStatus === 'sick' ? amStatus : pmStatus;
+
 
         // If BOTH are absences but different, precedence wins label
         const displayStatus = amStatus === 'absent' || pmStatus === 'absent' ? 'Absent' : 'Sick';
